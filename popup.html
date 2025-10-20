@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aria2Chrome</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <h1>Aria2Chrome</h1>
+        <span id="versionBadge" style="font-size: 11px; color: #888; font-weight: normal;">v1.1.0</span>
+      </div>
+      <div class="header-controls">
+        <button id="toggleInterceptionBtn" class="icon-btn toggle-icon enabled" title="Interception Enabled - Click to disable">●</button>
+        <button id="refreshBtn" class="icon-btn" title="Refresh">🔄</button>
+        <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+      </div>
+    </header>
+    
+    <div id="stats" class="stats">
+      <div class="stat-item">
+        <span class="stat-label">Active:</span>
+        <span id="activeCount" class="stat-value">0</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Completed:</span>
+        <span id="completedCount" class="stat-value">0</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">Total:</span>
+        <span id="totalCount" class="stat-value">0</span>
+      </div>
+    </div>
+    
+    <div id="downloadsList" class="downloads-list">
+      <div class="empty-state">
+        <p>No downloads yet</p>
+        <p class="hint">Click on a video link to start downloading</p>
+      </div>
+    </div>
+    
+    <footer class="popup-footer">
+      <button id="historyBtn" class="btn-history">📜 Download History</button>
+    </footer>
+  </div>
+  
+  <script src="browser-polyfill.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

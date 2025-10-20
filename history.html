@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aria2Chrome - Download History</title>
+  <link rel="stylesheet" href="history.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📜 Download History</h1>
+      <div class="header-actions">
+        <button id="clearHistoryBtn" class="btn btn-danger">🗑️ Clear All History</button>
+        <button id="backBtn" class="btn btn-secondary">← Back to Downloads</button>
+      </div>
+    </header>
+    
+    <main>
+      <div class="stats-bar">
+        <div class="stat">
+          <span class="stat-label">Total Downloads:</span>
+          <span id="totalDownloads" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Completed:</span>
+          <span id="completedDownloads" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Failed:</span>
+          <span id="failedDownloads" class="stat-value">0</span>
+        </div>
+      </div>
+      
+      <div id="historyList" class="history-list">
+        <div class="empty-state">
+          <p>📭 No download history yet</p>
+          <p class="hint">Downloads will appear here once you start downloading files</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <script src="browser-polyfill.js"></script>
+  <script src="history.js"></script>
+</body>
+</html>
+

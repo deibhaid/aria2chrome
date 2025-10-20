@@ -1,0 +1,72 @@
+<html>
+<head>
+<title>Web Page Blocked</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<META HTTP-EQUIV="PRAGMA" CONTENT="NO-CACHE">
+<meta name="viewport" content="initial-scale=1.0">
+<style>
+  #content {
+    border:3px solid#aaa;
+    background-color:#fff;
+    margin:1.5em;
+    padding:1.5em;
+    font-family:Tahoma,Helvetica,Arial,sans-serif;
+    font-size:1em; 
+    width: 1000px;   
+    text-align: left; 
+  }
+  h1 {
+    font-size:1.3em;
+    font-weight:bold;
+    color:#196390;
+  }
+  b {
+    font-weight:normal;
+    color:#196390;
+  }
+</style>
+</head>
+<body bgcolor="#e7e8e9">
+<center>  
+<div id="content">
+<h1>This web page is blocked.</h1>
+<p>Access to this web page has been blocked in accordance with Nike policy. If you believe this is in error, please click the link below and fill out the form to request review of this site.</p>
+<hr>
+<p><b>Your username is: </b> david.bryson@nike.com</p>
+<p><b>You tried to visit: </b> ideogram.ai/assets/progressive-image/balanced/response/pxOJ5MZYRaiYZmZFYgE9hQ</p>
+<p><b>This page is categorized as: </b> artificial-intelligence</p>
+<hr>
+<pre>                                 
+                                                                                                    
+                 ``                                                                        ```.`    
+               `+/                                                                 ``.-/+o+:-.      
+             `/mo                                                          ``.-:+syhdhs/-`          
+            -hMd                                                    `..:+oyhmNNmds/-`               
+          `oNMM/                                            ``.-/oyhdmMMMMNdy+:.                    
+         .hMMMM-                                     `.-/+shdmNMMMMMMNdy+:.                         
+        :mMMMMM+                             `.-:+sydmNMMMMMMMMMNmho:.`                             
+       :NMMMMMMN:                    `.-:/oyhmmNMMMMMMMMMMMNmho:.`                                  
+      .NMMMMMMMMNy:`          `.-/oshdmNMMMMMMMMMMMMMMMmhs/-`                                       
+      hMMMMMMMMMMMMmhysooosyhdmNMMMMMMMMMMMMMMMMMMmds/-`                                            
+     .MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMNdy+-.`                                                
+     -MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMNdy+-.`                                                     
+     `NMMMMMMMMMMMMMMMMMMMMMMMMMMMMMmyo:.`                                                          
+      /NMMMMMMMMMMMMMMMMMMMMMMMmho:.`                                                               
+       .yNMMMMMMMMMMMMMMMMmhs/.`                                                                    
+         ./shdmNNmmdhyo/-``                                                                         
+              `````                 
+
+</pre>
+<p><a href="https://niketech.service-now.com/nikenow?id=sc_cat_item&table=sc_cat_item&sys_id=e5b1ef524f9bd2000b86ecee0210c7f7">Click here to request a review of this site.</a></p>
+</div>
+</body>
+<script> 
+var cat = "artificial-intelligence";
+			switch(cat)
+			{
+			case 'NIKE_URL_SURVEY_TOOLS':
+			window.location.replace("https://worksmarter.nike.com/apps/survey-tools");
+			break;
+			}
+</script> 
+</html>

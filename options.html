@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aria2Chrome Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>⚙️ Aria2Chrome Settings</h1>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.1.0</p>
+    </header>
+    
+    <main>
+      <div class="settings-section">
+        <h2>Aria2 RPC Configuration</h2>
+        <p class="description">Configure the connection to your aria2c RPC server</p>
+        
+        <div class="form-group">
+          <label for="rpcUrl">RPC URL</label>
+          <input 
+            type="text" 
+            id="rpcUrl" 
+            placeholder="http://localhost:6800/jsonrpc"
+            value="http://localhost:6800/jsonrpc"
+          >
+          <small>The JSON-RPC endpoint of your aria2c server</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="secret">RPC Secret (Optional)</label>
+          <input 
+            type="password" 
+            id="secret" 
+            placeholder="Leave empty if no secret is set"
+          >
+          <small>The secret token for aria2 RPC authentication</small>
+        </div>
+        
+        <div class="form-group">
+          <label for="downloadDir">Download Directory</label>
+          <input 
+            type="text" 
+            id="downloadDir" 
+            placeholder="~/Downloads"
+          >
+          <small>Default: ~/Downloads (home directory). Works on macOS, Linux, and Windows</small>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Extension Behavior</h2>
+        
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoResume" checked>
+            <span>Automatically resume failed downloads</span>
+          </label>
+          <small>Extension will attempt to resume downloads that encounter errors</small>
+        </div>
+        
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="showNotifications" checked>
+            <span>Show browser notifications</span>
+          </label>
+          <small>Display notifications when downloads are added or completed</small>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>File Extensions</h2>
+        <p class="description">Select which file types to capture for downloading</p>
+        
+        <div class="extensions-container">
+          <div class="extension-category">
+            <h3 class="category-title">🎬 Video Files</h3>
+            <div class="extension-grid" id="videoExtensions"></div>
+          </div>
+          
+          <div class="extension-category">
+            <h3 class="category-title">🎵 Audio Files</h3>
+            <div class="extension-grid" id="audioExtensions"></div>
+          </div>
+          
+          <div class="extension-category">
+            <h3 class="category-title">📦 Archive Files</h3>
+            <div class="extension-grid" id="archiveExtensions"></div>
+          </div>
+          
+          <div class="extension-category">
+            <h3 class="category-title">💿 Disk Images</h3>
+            <div class="extension-grid" id="diskExtensions"></div>
+          </div>
+          
+          <div class="extension-category">
+            <h3 class="category-title">✏️ Custom Extensions</h3>
+            <div class="custom-extension-input">
+              <input type="text" id="customExtension" placeholder=".ext" maxlength="10">
+              <button id="addCustomBtn" class="btn btn-secondary">Add</button>
+            </div>
+            <div class="extension-grid" id="customExtensions"></div>
+          </div>
+        </div>
+        
+        <div class="extension-actions">
+          <button id="selectAllBtn" class="btn btn-secondary">Select All</button>
+          <button id="deselectAllBtn" class="btn btn-secondary">Deselect All</button>
+          <button id="resetExtensionsBtn" class="btn btn-secondary">Reset to Defaults</button>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Connection Test</h2>
+        <p class="description">Test your aria2 RPC connection</p>
+        
+        <button id="testBtn" class="btn btn-secondary">Test Connection</button>
+        <div id="testResult" class="test-result"></div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Backup & Restore</h2>
+        <p class="description">Export and import your settings and download history</p>
+        
+        <div class="backup-actions">
+          <button id="exportBtn" class="btn btn-secondary">📤 Export Backup</button>
+          <button id="importBtn" class="btn btn-secondary">📥 Import Backup</button>
+          <input type="file" id="importFile" accept=".json" style="display: none;">
+        </div>
+        
+        <p class="hint">💡 Backups are automatically saved every hour to preserve your data</p>
+      </div>
+      
+      <div class="actions">
+        <button id="saveBtn" class="btn btn-primary">Save Settings</button>
+        <button id="resetBtn" class="btn btn-secondary">Reset to Defaults</button>
+      </div>
+      
+      <div id="saveStatus" class="save-status"></div>
+    </main>
+    
+    <footer>
+      <div class="help-section">
+        <h3>📖 Quick Setup Guide</h3>
+        <ol>
+          <li>Install and run aria2c with RPC enabled:
+            <code>aria2c --enable-rpc --rpc-listen-all=true</code>
+          </li>
+          <li>If using a secret token, add: <code>--rpc-secret=YOUR_SECRET</code></li>
+          <li>Configure the RPC URL above (default: http://localhost:6800/jsonrpc)</li>
+          <li>Test the connection and save your settings</li>
+        </ol>
+        
+        <h3>💡 Tips</h3>
+        <ul>
+          <li>The extension will intercept clicks on video file links (.mp4, .mkv, etc.)</li>
+          <li>Downloads will automatically resume if they fail or are interrupted</li>
+          <li>Use the popup to monitor download progress and manage your queue</li>
+        </ul>
+      </div>
+    </footer>
+  </div>
+  
+  <script src="browser-polyfill.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
