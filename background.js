@@ -1606,5 +1606,69 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   }
 });
 
+// Intercept navigation to video files (prevents Chrome from playing them)
+chrome.webRequest.onBeforeRequest.addListener(
+  function(details) {
+    // Only intercept main frame navigations (when user clicks a video link)
+    if (details.type !== 'main_frame') {
+      return;
+    }
+    
+    // Don't intercept if disabled
+    if (!interceptionEnabled) {
+      console.log('[Aria2 Downloader] Interception disabled, allowing navigation');
+      return;
+    }
+    
+    const url = details.url;
+    console.log('[Aria2 Downloader] webRequest.onBeforeRequest:', { url, type: details.type });
+    
+    // Check if URL ends with video extension
+    const videoExtensions = [
+      '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
+      '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb'
+    ];
+    
+    const urlLower = url.toLowerCase();
+    const isVideo = videoExtensions.some(ext => urlLower.endsWith(ext));
+    
+    if (isVideo) {
+      console.log('[Aria2 Downloader] ✓ Video file navigation detected, intercepting:', url);
+      
+      // Extract filename from URL
+      const urlObj = new URL(url);
+      const filename = decodeURIComponent(urlObj.pathname.split('/').pop());
+      
+      console.log('[Aria2 Downloader] Adding to aria2:', filename);
+      
+      // Add to aria2 download
+      addDownload(url, filename, {
+        pageUrl: details.initiator || url,
+        pageTitle: 'Direct Navigation'
+      });
+      
+      // Cancel the navigation by closing the tab or going back
+      chrome.tabs.get(details.tabId, (tab) => {
+        if (chrome.runtime.lastError) {
+          console.log('[Aria2 Downloader] Could not get tab info');
+          return;
+        }
+        
+        // Go back if there's history, otherwise close the tab
+        if (tab.url === url) {
+          chrome.tabs.goBack(details.tabId).catch(() => {
+            // If can't go back, just show a blank page
+            chrome.tabs.update(details.tabId, { url: 'about:blank' });
+          });
+        }
+      });
+      
+      return { cancel: true };
+    }
+  },
+  { urls: ["<all_urls>"] },
+  ["blocking"]
+);
+
 // Load downloads on startup
 loadDownloads();
