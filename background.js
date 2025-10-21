@@ -1607,6 +1607,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 });
 
 // Intercept navigation to video files (prevents Chrome from playing them)
+// Using onBeforeRequest WITHOUT blocking - we'll handle it differently
 chrome.webRequest.onBeforeRequest.addListener(
   function(details) {
     // Only intercept main frame navigations (when user clicks a video link)
@@ -1616,7 +1617,6 @@ chrome.webRequest.onBeforeRequest.addListener(
     
     // Don't intercept if disabled
     if (!interceptionEnabled) {
-      console.log('[Aria2 Downloader] Interception disabled, allowing navigation');
       return;
     }
     
@@ -1647,27 +1647,22 @@ chrome.webRequest.onBeforeRequest.addListener(
         pageTitle: 'Direct Navigation'
       });
       
-      // Cancel the navigation by closing the tab or going back
-      chrome.tabs.get(details.tabId, (tab) => {
-        if (chrome.runtime.lastError) {
-          console.log('[Aria2 Downloader] Could not get tab info');
-          return;
-        }
-        
-        // Go back if there's history, otherwise close the tab
-        if (tab.url === url) {
+      // Navigate back instead of blocking (Manifest V3 compatible)
+      setTimeout(() => {
+        chrome.tabs.get(details.tabId, (tab) => {
+          if (chrome.runtime.lastError) {
+            return;
+          }
+          
+          // Go back or close the tab
           chrome.tabs.goBack(details.tabId).catch(() => {
-            // If can't go back, just show a blank page
             chrome.tabs.update(details.tabId, { url: 'about:blank' });
           });
-        }
-      });
-      
-      return { cancel: true };
+        });
+      }, 100);
     }
   },
-  { urls: ["<all_urls>"] },
-  ["blocking"]
+  { urls: ["<all_urls>"] }
 );
 
 // Load downloads on startup
