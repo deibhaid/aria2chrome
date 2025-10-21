@@ -1521,6 +1521,12 @@ async function importBackup(backupData) {
 
 // Intercept browser downloads (for button-triggered downloads like gofile.io)
 chrome.downloads.onCreated.addListener(async (downloadItem) => {
+  console.log('[Aria2 Downloader] chrome.downloads.onCreated triggered:', {
+    url: downloadItem.url,
+    filename: downloadItem.filename,
+    interceptionEnabled: interceptionEnabled
+  });
+  
   // Don't intercept if disabled
   if (!interceptionEnabled) {
     console.log('[Aria2 Downloader] Interception disabled, allowing browser download');
@@ -1531,6 +1537,8 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     // Check if this download matches our tracked extensions
     const url = downloadItem.url;
     const filename = downloadItem.filename || '';
+    
+    console.log('[Aria2 Downloader] Checking download:', { url, filename });
     
     // Check forced ignore list first
     if (shouldIgnoreDownload(url, filename)) {

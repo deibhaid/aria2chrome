@@ -174,12 +174,19 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
 
 // Intercept clicks on links
 document.addEventListener('click', function(event) {
+  console.log('[Aria2 Downloader] Click detected on page:', {
+    target: event.target,
+    tagName: event.target.tagName
+  });
+  
   let target = event.target;
   
   // Traverse up to find anchor tag
   while (target && target.tagName !== 'A') {
     target = target.parentElement;
   }
+  
+  console.log('[Aria2 Downloader] After traversal, target:', target ? target.tagName : 'null');
   
   if (target && target.tagName === 'A') {
     const href = target.href;
