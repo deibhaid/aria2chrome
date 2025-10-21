@@ -69,7 +69,15 @@ function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
       const isIPAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
       const isLocalhost = hostname === 'localhost' || hostname.startsWith('127.') || hostname.startsWith('192.168.') || hostname.startsWith('10.');
       
+      console.log('[Aria2 Downloader] File extension match:', {
+        hostname: hostname,
+        pathname: pathname,
+        isIPAddress: isIPAddress,
+        isLocalhost: isLocalhost
+      });
+      
       if (isIPAddress || isLocalhost) {
+        console.log('[Aria2 Downloader] ✓ IP/Local address detected - will intercept');
         return true; // Always intercept files from IP/local addresses
       }
       
@@ -178,12 +186,22 @@ document.addEventListener('click', function(event) {
     const downloadAttr = target.getAttribute('download') || '';
     const linkText = target.textContent || target.innerText || '';
     
+    // Debug logging
+    console.log('[Aria2 Downloader] Link clicked:', {
+      href: href,
+      downloadAttr: downloadAttr,
+      linkText: linkText,
+      isVideo: isVideoUrl(href, downloadAttr, linkText, target)
+    });
+    
     if (isVideoUrl(href, downloadAttr, linkText, target)) {
       // Don't intercept if disabled
       if (!interceptionEnabled) {
         console.log('[Aria2 Downloader] Interception disabled, allowing browser download');
         return;
       }
+      
+      console.log('[Aria2 Downloader] ✓ Intercepting download for:', href);
       
       // Prevent default download
       event.preventDefault();
