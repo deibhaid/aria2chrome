@@ -1603,22 +1603,17 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
         referrer: downloadItem.referrer
       });
       
-      // Cancel by suggesting a fake filename and then cancelling
-      // This prevents Chrome from actually downloading
-      suggest({ filename: filename, conflict_action: 'overwrite' });
+      // DON'T call suggest() - this prevents Chrome from proceeding with the download
+      // Instead, cancel it immediately
+      chrome.downloads.cancel(downloadItem.id, () => {
+        if (chrome.runtime.lastError) {
+          console.error('[Aria2 Downloader] Failed to cancel:', chrome.runtime.lastError);
+        } else {
+          console.log('[Aria2 Downloader] ✓ Chrome download cancelled');
+        }
+      });
       
-      // Cancel immediately
-      setTimeout(() => {
-        chrome.downloads.cancel(downloadItem.id, () => {
-          if (chrome.runtime.lastError) {
-            console.error('[Aria2 Downloader] Failed to cancel:', chrome.runtime.lastError);
-          } else {
-            console.log('[Aria2 Downloader] ✓ Chrome download cancelled');
-          }
-        });
-      }, 10);
-      
-      return true; // Handled asynchronously
+      // Don't return anything - we've handled it
     } else {
       console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
       suggest();
