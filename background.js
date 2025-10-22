@@ -1535,6 +1535,9 @@ async function importBackup(backupData) {
 // Store downloads we want to intercept (keyed by download ID)
 const downloadsToIntercept = new Map();
 
+// Counter for declarativeNetRequest rule IDs
+let ruleIdCounter = 1;
+
 // Intercept browser downloads EARLY using onDeterminingFilename
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   console.log('[Aria2 Downloader] onDeterminingFilename triggered:', {
@@ -1614,6 +1617,40 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       // Remove any path from filename
       finalFilename = finalFilename.split(/[/\\]/).pop();
       
+      // Use declarativeNetRequest to BLOCK this download at network level
+      const ruleId = ruleIdCounter++;
+      const urlPattern = url.split('?')[0] + '*'; // Match URL with any query params
+      
+      console.log('[Aria2 Downloader] Creating network block rule for:', urlPattern);
+      
+      // Create a dynamic rule to block this specific download
+      chrome.declarativeNetRequest.updateDynamicRules({
+        addRules: [{
+          id: ruleId,
+          priority: 1,
+          action: { type: 'block' },
+          condition: {
+            urlFilter: urlPattern,
+            resourceTypes: ['main_frame', 'sub_frame']
+          }
+        }],
+        removeRuleIds: []
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('[Aria2 Downloader] Failed to add block rule:', chrome.runtime.lastError);
+        } else {
+          console.log('[Aria2 Downloader] ✓ Network block rule added, Chrome will not download');
+          
+          // Remove the rule after 10 seconds (cleanup)
+          setTimeout(() => {
+            chrome.declarativeNetRequest.updateDynamicRules({
+              addRules: [],
+              removeRuleIds: [ruleId]
+            });
+          }, 10000);
+        }
+      });
+      
       // For file hosting sites with expiring links, use fetch to follow redirects
       const isFileHostingSite = hostname.includes('gofile.io') || 
                                  hostname.includes('multiup.io') ||
@@ -1685,8 +1722,8 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
         })();
       }
       
-      // DON'T call suggest() - this prevents Chrome from downloading
-      // The download will be cancelled automatically when we don't respond
+      // Call suggest to acknowledge but Chrome won't download due to network block
+      suggest();
     } else {
       console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
       suggest();

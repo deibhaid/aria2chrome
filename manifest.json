@@ -9,7 +9,9 @@
     "notifications",
     "activeTab",
     "cookies",
-    "webRequest"
+    "webRequest",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess"
   ],
   "host_permissions": [
     "<all_urls>"
