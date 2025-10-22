@@ -1635,7 +1635,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
 });
 
 // Intercept navigation to video files (prevents Chrome from playing them)
-// Using onBeforeRequest WITHOUT blocking - we'll handle it differently
+// ONLY intercepts direct CDN/IP address video files, not file hosting pages
 chrome.webRequest.onBeforeRequest.addListener(
   function(details) {
     // Only intercept main frame navigations (when user clicks a video link)
@@ -1651,9 +1651,33 @@ chrome.webRequest.onBeforeRequest.addListener(
     const url = details.url;
     console.log('[Aria2 Downloader] webRequest.onBeforeRequest:', { url, type: details.type });
     
-    // Check forced ignore list first (file hosting pages)
-    if (shouldIgnoreDownload(url, '')) {
-      console.log('[Aria2 Downloader] Ignoring navigation - matches ignore list');
+    // Parse URL to get hostname and pathname
+    let urlPath = '';
+    let hostname = '';
+    try {
+      const urlObj = new URL(url);
+      urlPath = urlObj.pathname.toLowerCase();
+      hostname = urlObj.hostname.toLowerCase();
+    } catch (e) {
+      console.log('[Aria2 Downloader] Failed to parse URL, skipping');
+      return;
+    }
+    
+    // WHITELIST approach: ONLY block navigation for direct CDN/storage/IP video files
+    // Everything else goes through normal browser flow (where downloads.onCreated will catch it)
+    const isDirectVideoServer = 
+      /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) || // IP address
+      hostname === 'localhost' ||
+      hostname.startsWith('127.') ||
+      hostname.startsWith('192.168.') ||
+      hostname.startsWith('10.') ||
+      hostname.includes('cdn') || // CDN servers
+      hostname.includes('storage') || // Storage servers
+      hostname.includes('file-'); // file-server.example.com
+    
+    // If it's NOT a direct video server, let browser handle normally
+    if (!isDirectVideoServer) {
+      console.log('[Aria2 Downloader] Not a direct video server, letting browser handle:', hostname);
       return;
     }
     
@@ -1663,66 +1687,14 @@ chrome.webRequest.onBeforeRequest.addListener(
       '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb'
     ];
     
-    const urlLower = url.toLowerCase();
-    
-    // Extract pathname and hostname to check extension (ignore query params)
-    let urlPath = urlLower;
-    let hostname = '';
-    try {
-      const urlObj = new URL(url);
-      urlPath = urlObj.pathname;
-      hostname = urlObj.hostname.toLowerCase();
-    } catch (e) {
-      // If URL parsing fails, use the full URL
-    }
-    
-    // Check for known file hosting/intermediary sites - DON'T intercept navigation
-    const intermediarySites = [
-      'multiup.io',
-      'uptobox.com',
-      'uploaded.net',
-      'rapidgator.net',
-      '1fichier.com',
-      'nitroflare.com',
-      'uploadgig.com',
-      'turbobit.net',
-      'filefactory.com'
-    ];
-    
-    // If it's a file hosting site, let the browser handle it normally
-    // The chrome.downloads.onCreated will intercept the actual download
-    if (intermediarySites.some(site => hostname.includes(site))) {
-      console.log('[Aria2 Downloader] File hosting site detected, letting browser handle:', hostname);
-      return; // Don't block navigation, let it proceed normally
-    }
-    
     // Only intercept if URL pathname ends with video extension
     const isVideo = videoExtensions.some(ext => urlPath.endsWith(ext));
     
     if (isVideo) {
-      // Additional check: Only block navigation if it's a DIRECT video file
-      // (not a file hosting page with .mkv in the URL)
-      const isDirectVideo = 
-        hostname.includes('cdn') || // CDN links
-        hostname.includes('storage') || // Storage servers
-        hostname.includes('file-') || // file-server.example.com
-        /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) || // IP address
-        hostname === 'localhost' ||
-        hostname.startsWith('127.') ||
-        hostname.startsWith('192.168.') ||
-        hostname.startsWith('10.') ||
-        urlPath.split('/').length <= 3; // Short paths like /file.mp4
-      
-      if (!isDirectVideo) {
-        console.log('[Aria2 Downloader] Not a direct video link, letting browser handle');
-        return; // Let chrome.downloads.onCreated handle it
-      }
-      
-      console.log('[Aria2 Downloader] ✓ Direct video file navigation detected, intercepting:', url);
+      console.log('[Aria2 Downloader] ✓ Direct CDN/IP video file detected, intercepting:', url);
       
       // Extract filename from URL
-      const urlObj = new URL(url);
-      const filename = decodeURIComponent(urlObj.pathname.split('/').pop());
+      const filename = decodeURIComponent(urlPath.split('/').pop());
       
       console.log('[Aria2 Downloader] Adding to aria2:', filename);
       
@@ -1745,6 +1717,8 @@ chrome.webRequest.onBeforeRequest.addListener(
           });
         });
       }, 100);
+    } else {
+      console.log('[Aria2 Downloader] Direct video server but not a video file, allowing navigation');
     }
   },
   { urls: ["<all_urls>"] }
