@@ -1651,6 +1651,12 @@ chrome.webRequest.onBeforeRequest.addListener(
     const url = details.url;
     console.log('[Aria2 Downloader] webRequest.onBeforeRequest:', { url, type: details.type });
     
+    // Check forced ignore list first (file hosting pages)
+    if (shouldIgnoreDownload(url, '')) {
+      console.log('[Aria2 Downloader] Ignoring navigation - matches ignore list');
+      return;
+    }
+    
     // Check if URL ends with video extension
     const videoExtensions = [
       '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
@@ -1658,7 +1664,18 @@ chrome.webRequest.onBeforeRequest.addListener(
     ];
     
     const urlLower = url.toLowerCase();
-    const isVideo = videoExtensions.some(ext => urlLower.endsWith(ext));
+    
+    // Extract pathname to check extension (ignore query params)
+    let urlPath = urlLower;
+    try {
+      const urlObj = new URL(url);
+      urlPath = urlObj.pathname;
+    } catch (e) {
+      // If URL parsing fails, use the full URL
+    }
+    
+    // Only intercept if URL pathname ends with video extension
+    const isVideo = videoExtensions.some(ext => urlPath.endsWith(ext));
     
     if (isVideo) {
       console.log('[Aria2 Downloader] ✓ Video file navigation detected, intercepting:', url);
