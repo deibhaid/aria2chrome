@@ -32,12 +32,25 @@ const FORCED_IGNORE_LIST = {
     /^data:/i,           // Data URLs (backups, exports)
     /^blob:/i,           // Blob URLs (generated files)
     /^chrome-extension:\/\//i,  // Extension URLs
-    /^file:\/\//i        // Local file URLs
+    /^file:\/\//i,       // Local file URLs
     // Note: Removed gofile.io, mega.nz, mediafire - now handled with cookies!
+    
+    // File hosting service pages (not direct downloads)
+    // These show filename in URL but aren't actual download links
+    /rapidgator\.net\/file\//i,
+    /nitroflare\.com\/view\//i,
+    /uploadgig\.com\/file\/download\//i,
+    /multiup\.io\/download\//i,
+    /1fichier\.com\/\?/i,
+    /turbobit\.net\//i,
+    /uploaded\.net\/file\//i,
+    /filefactory\.com\/file\//i
   ],
   filenamePatterns: [
     /aria2-downloader-backup/i,  // Our backup files
-    /\.json$/i           // All JSON files (to be safe)
+    /\.json$/i,          // All JSON files (to be safe)
+    /\.html$/i,          // HTML files (file hosting pages)
+    /\.htm$/i            // HTM files (file hosting pages)
   ]
 };
 
@@ -1562,11 +1575,26 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     ];
     
     // Check if URL or filename matches our extensions
+    // IMPORTANT: Only match if URL ENDS with extension or has extension followed by query params
+    // Don't match URLs where extension is in the middle (e.g., /file.mkv.html or /file.mkv/download)
     const urlLower = url.toLowerCase();
     const filenameLower = filename.toLowerCase();
-    const matchesExtension = extensions.some(ext => 
-      urlLower.includes(ext.toLowerCase()) || filenameLower.endsWith(ext.toLowerCase())
-    );
+    
+    // Extract just the pathname (remove query params) to check extension
+    let urlPath = urlLower;
+    try {
+      const urlObj = new URL(url);
+      urlPath = urlObj.pathname;
+    } catch (e) {
+      // If URL parsing fails, use the full URL
+    }
+    
+    // Check if URL path ends with a video extension (not just contains it)
+    const matchesExtension = extensions.some(ext => {
+      const extLower = ext.toLowerCase();
+      // Match if: URL path ends with extension OR filename ends with extension
+      return urlPath.endsWith(extLower) || filenameLower.endsWith(extLower);
+    });
     
     if (matchesExtension) {
       console.log('[Aria2 Downloader] Browser download intercepted:', downloadItem);
