@@ -1665,20 +1665,60 @@ chrome.webRequest.onBeforeRequest.addListener(
     
     const urlLower = url.toLowerCase();
     
-    // Extract pathname to check extension (ignore query params)
+    // Extract pathname and hostname to check extension (ignore query params)
     let urlPath = urlLower;
+    let hostname = '';
     try {
       const urlObj = new URL(url);
       urlPath = urlObj.pathname;
+      hostname = urlObj.hostname.toLowerCase();
     } catch (e) {
       // If URL parsing fails, use the full URL
+    }
+    
+    // Check for known file hosting/intermediary sites - DON'T intercept navigation
+    const intermediarySites = [
+      'multiup.io',
+      'uptobox.com',
+      'uploaded.net',
+      'rapidgator.net',
+      '1fichier.com',
+      'nitroflare.com',
+      'uploadgig.com',
+      'turbobit.net',
+      'filefactory.com'
+    ];
+    
+    // If it's a file hosting site, let the browser handle it normally
+    // The chrome.downloads.onCreated will intercept the actual download
+    if (intermediarySites.some(site => hostname.includes(site))) {
+      console.log('[Aria2 Downloader] File hosting site detected, letting browser handle:', hostname);
+      return; // Don't block navigation, let it proceed normally
     }
     
     // Only intercept if URL pathname ends with video extension
     const isVideo = videoExtensions.some(ext => urlPath.endsWith(ext));
     
     if (isVideo) {
-      console.log('[Aria2 Downloader] ✓ Video file navigation detected, intercepting:', url);
+      // Additional check: Only block navigation if it's a DIRECT video file
+      // (not a file hosting page with .mkv in the URL)
+      const isDirectVideo = 
+        hostname.includes('cdn') || // CDN links
+        hostname.includes('storage') || // Storage servers
+        hostname.includes('file-') || // file-server.example.com
+        /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) || // IP address
+        hostname === 'localhost' ||
+        hostname.startsWith('127.') ||
+        hostname.startsWith('192.168.') ||
+        hostname.startsWith('10.') ||
+        urlPath.split('/').length <= 3; // Short paths like /file.mp4
+      
+      if (!isDirectVideo) {
+        console.log('[Aria2 Downloader] Not a direct video link, letting browser handle');
+        return; // Let chrome.downloads.onCreated handle it
+      }
+      
+      console.log('[Aria2 Downloader] ✓ Direct video file navigation detected, intercepting:', url);
       
       // Extract filename from URL
       const urlObj = new URL(url);
