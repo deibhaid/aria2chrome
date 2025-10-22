@@ -1634,95 +1634,9 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   }
 });
 
-// Intercept navigation to video files (prevents Chrome from playing them)
-// ONLY intercepts direct CDN/IP address video files, not file hosting pages
-chrome.webRequest.onBeforeRequest.addListener(
-  function(details) {
-    // Only intercept main frame navigations (when user clicks a video link)
-    if (details.type !== 'main_frame') {
-      return;
-    }
-    
-    // Don't intercept if disabled
-    if (!interceptionEnabled) {
-      return;
-    }
-    
-    const url = details.url;
-    console.log('[Aria2 Downloader] webRequest.onBeforeRequest:', { url, type: details.type });
-    
-    // Parse URL to get hostname and pathname
-    let urlPath = '';
-    let hostname = '';
-    try {
-      const urlObj = new URL(url);
-      urlPath = urlObj.pathname.toLowerCase();
-      hostname = urlObj.hostname.toLowerCase();
-    } catch (e) {
-      console.log('[Aria2 Downloader] Failed to parse URL, skipping');
-      return;
-    }
-    
-    // WHITELIST approach: ONLY block navigation for direct CDN/storage/IP video files
-    // Everything else goes through normal browser flow (where downloads.onCreated will catch it)
-    const isDirectVideoServer = 
-      /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) || // IP address
-      hostname === 'localhost' ||
-      hostname.startsWith('127.') ||
-      hostname.startsWith('192.168.') ||
-      hostname.startsWith('10.') ||
-      hostname.includes('cdn') || // CDN servers
-      hostname.includes('storage') || // Storage servers
-      hostname.includes('file-'); // file-server.example.com
-    
-    // If it's NOT a direct video server, let browser handle normally
-    if (!isDirectVideoServer) {
-      console.log('[Aria2 Downloader] Not a direct video server, letting browser handle:', hostname);
-      return;
-    }
-    
-    // Check if URL ends with video extension
-    const videoExtensions = [
-      '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
-      '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb'
-    ];
-    
-    // Only intercept if URL pathname ends with video extension
-    const isVideo = videoExtensions.some(ext => urlPath.endsWith(ext));
-    
-    if (isVideo) {
-      console.log('[Aria2 Downloader] ✓ Direct CDN/IP video file detected, intercepting:', url);
-      
-      // Extract filename from URL
-      const filename = decodeURIComponent(urlPath.split('/').pop());
-      
-      console.log('[Aria2 Downloader] Adding to aria2:', filename);
-      
-      // Add to aria2 download
-      addDownload(url, filename, {
-        pageUrl: details.initiator || url,
-        pageTitle: 'Direct Navigation'
-      });
-      
-      // Navigate back instead of blocking (Manifest V3 compatible)
-      setTimeout(() => {
-        chrome.tabs.get(details.tabId, (tab) => {
-          if (chrome.runtime.lastError) {
-            return;
-          }
-          
-          // Go back or close the tab
-          chrome.tabs.goBack(details.tabId).catch(() => {
-            chrome.tabs.update(details.tabId, { url: 'about:blank' });
-          });
-        });
-      }, 100);
-    } else {
-      console.log('[Aria2 Downloader] Direct video server but not a video file, allowing navigation');
-    }
-  },
-  { urls: ["<all_urls>"] }
-);
+// NOTE: Navigation interception disabled - it was causing issues with file hosting sites
+// that use redirect chains to get the actual download URL. We now rely entirely on
+// chrome.downloads.onCreated to intercept downloads after Chrome resolves the final URL.
 
 // Load downloads on startup
 loadDownloads();
