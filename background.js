@@ -1532,9 +1532,12 @@ async function importBackup(backupData) {
   }
 }
 
-// Intercept browser downloads (for button-triggered downloads like gofile.io)
-chrome.downloads.onCreated.addListener(async (downloadItem) => {
-  console.log('[Aria2 Downloader] chrome.downloads.onCreated triggered:', {
+// Store downloads we want to intercept (keyed by download ID)
+const downloadsToIntercept = new Map();
+
+// Intercept browser downloads EARLY using onDeterminingFilename
+chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+  console.log('[Aria2 Downloader] onDeterminingFilename triggered:', {
     url: downloadItem.url,
     filename: downloadItem.filename,
     interceptionEnabled: interceptionEnabled
@@ -1543,19 +1546,18 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
   // Don't intercept if disabled
   if (!interceptionEnabled) {
     console.log('[Aria2 Downloader] Interception disabled, allowing browser download');
+    suggest();
     return;
   }
   
   try {
-    // Check if this download matches our tracked extensions
     const url = downloadItem.url;
     const filename = downloadItem.filename || '';
     
-    console.log('[Aria2 Downloader] Checking download:', { url, filename });
-    
     // Check forced ignore list first
     if (shouldIgnoreDownload(url, filename)) {
-      return; // Already logged in shouldIgnoreDownload
+      suggest();
+      return;
     }
     
     // Check if this is a download we should ignore (prevents loops)
@@ -1563,24 +1565,14 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     if (ignoreNextDownloads.has(downloadKey)) {
       console.log('[Aria2 Downloader] Ignoring download (in ignore list - prevents loop)');
       ignoreNextDownloads.delete(downloadKey);
+      suggest();
       return;
     }
     
-    // Load current file extensions
-    const result = await chrome.storage.sync.get(['fileExtensions']);
-    const extensions = result.fileExtensions || [
-      '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
-      '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb',
-      '.rar', '.zip', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso', '.dmg'
-    ];
-    
-    // Check if URL or filename matches our extensions
-    // IMPORTANT: Only match if URL ENDS with extension or has extension followed by query params
-    // Don't match URLs where extension is in the middle (e.g., /file.mkv.html or /file.mkv/download)
+    // Check file extension
     const urlLower = url.toLowerCase();
     const filenameLower = filename.toLowerCase();
     
-    // Extract just the pathname (remove query params) to check extension
     let urlPath = urlLower;
     try {
       const urlObj = new URL(url);
@@ -1589,64 +1581,91 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       // If URL parsing fails, use the full URL
     }
     
-    // Check if URL path ends with a video extension (not just contains it)
+    // Default extensions
+    const extensions = [
+      '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
+      '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb',
+      '.rar', '.zip', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso', '.dmg'
+    ];
+    
     const matchesExtension = extensions.some(ext => {
       const extLower = ext.toLowerCase();
-      // Match if: URL path ends with extension OR filename ends with extension
       return urlPath.endsWith(extLower) || filenameLower.endsWith(extLower);
     });
     
     if (matchesExtension) {
-      console.log('[Aria2 Downloader] ✓ Browser download intercepted:', downloadItem);
+      console.log('[Aria2 Downloader] ✓ Intercepting download, will cancel and send to aria2');
       
-      // Cancel the Chrome download IMMEDIATELY (synchronously, before any async operations)
-      // This must be done first to prevent Chrome from actually downloading
-      console.log('[Aria2 Downloader] Cancelling Chrome download ID:', downloadItem.id);
-      chrome.downloads.cancel(downloadItem.id, () => {
-        if (chrome.runtime.lastError) {
-          console.error('[Aria2 Downloader] Failed to cancel Chrome download:', chrome.runtime.lastError);
-        } else {
-          console.log('[Aria2 Downloader] ✓ Chrome download cancelled successfully');
-        }
+      // Store this download for interception
+      downloadsToIntercept.set(downloadItem.id, {
+        url: url,
+        filename: filename,
+        referrer: downloadItem.referrer
       });
       
-      // Also erase it immediately to prevent it from showing in download bar
-      chrome.downloads.erase({ id: downloadItem.id }, () => {
-        if (chrome.runtime.lastError) {
-          console.log('[Aria2 Downloader] Could not erase yet (will try again later)');
-        }
-      });
+      // Cancel by suggesting a fake filename and then cancelling
+      // This prevents Chrome from actually downloading
+      suggest({ filename: filename, conflict_action: 'overwrite' });
       
-      // Extract filename from downloadItem
-      let finalFilename = filename;
-      if (!finalFilename) {
-        try {
-          const urlObj = new URL(url);
-          finalFilename = urlObj.pathname.split('/').pop() || 'download';
-        } catch (e) {
-          finalFilename = 'download_' + Date.now();
-        }
-      }
+      // Cancel immediately
+      setTimeout(() => {
+        chrome.downloads.cancel(downloadItem.id, () => {
+          if (chrome.runtime.lastError) {
+            console.error('[Aria2 Downloader] Failed to cancel:', chrome.runtime.lastError);
+          } else {
+            console.log('[Aria2 Downloader] ✓ Chrome download cancelled');
+          }
+        });
+      }, 10);
       
-      // Remove any path from filename (get just the filename)
-      finalFilename = finalFilename.split(/[/\\]/).pop();
-      
-      // Add to aria2
-      const result = await addDownload(url, finalFilename, {
-        pageUrl: downloadItem.referrer || url,
-        pageTitle: 'Browser Download'
-      });
-      
-      if (result.success) {
-        console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
-      } else {
-        console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
-      }
+      return true; // Handled asynchronously
     } else {
-      console.log('[Aria2 Downloader] Download does not match configured extensions, allowing Chrome download');
+      console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
+      suggest();
     }
   } catch (error) {
-    console.error('[Aria2 Downloader] Error intercepting download:', error);
+    console.error('[Aria2 Downloader] Error in onDeterminingFilename:', error);
+    suggest();
+  }
+});
+
+// Handle cancelled downloads - add them to aria2
+chrome.downloads.onChanged.addListener(async (delta) => {
+  // Check if this download was cancelled and is one we want to intercept
+  if (delta.state && delta.state.current === 'interrupted' && downloadsToIntercept.has(delta.id)) {
+    const downloadInfo = downloadsToIntercept.get(delta.id);
+    downloadsToIntercept.delete(delta.id);
+    
+    console.log('[Aria2 Downloader] Download interrupted (as expected), adding to aria2:', downloadInfo);
+    
+    // Extract filename
+    let finalFilename = downloadInfo.filename;
+    if (!finalFilename) {
+      try {
+        const urlObj = new URL(downloadInfo.url);
+        finalFilename = urlObj.pathname.split('/').pop() || 'download';
+      } catch (e) {
+        finalFilename = 'download_' + Date.now();
+      }
+    }
+    
+    // Remove any path from filename
+    finalFilename = finalFilename.split(/[/\\]/).pop();
+    
+    // Add to aria2
+    const result = await addDownload(downloadInfo.url, finalFilename, {
+      pageUrl: downloadInfo.referrer || downloadInfo.url,
+      pageTitle: 'Browser Download'
+    });
+    
+    if (result.success) {
+      console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
+    } else {
+      console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
+    }
+    
+    // Erase from Chrome download history
+    chrome.downloads.erase({ id: delta.id });
   }
 });
 
