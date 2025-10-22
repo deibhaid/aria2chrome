@@ -1614,27 +1614,61 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       // Remove any path from filename
       finalFilename = finalFilename.split(/[/\\]/).pop();
       
-      // For file hosting sites with expiring links, add to aria2 with HIGHEST PRIORITY
-      // This must be INSTANT - no async delays
+      // For file hosting sites with expiring links, use fetch to follow redirects
       const isFileHostingSite = hostname.includes('gofile.io') || 
                                  hostname.includes('multiup.io') ||
                                  hostname.includes('multiup.org') ||
                                  hostname.includes('pixeldrain.com');
       
       if (isFileHostingSite) {
-        console.log('[Aria2 Downloader] ⚠️ File hosting site - adding to aria2 with MAXIMUM PRIORITY');
+        console.log('[Aria2 Downloader] ⚠️ File hosting site - using fetch to resolve final URL');
         
-        // Use Promise to add synchronously (blocking)
-        addDownload(url, finalFilename, {
-          pageUrl: downloadItem.referrer || url,
-          pageTitle: 'Browser Download (File Host)'
-        }).then(result => {
-          if (result.success) {
-            console.log('[Aria2 Downloader] ✓ File hosting download added successfully');
-          } else {
-            console.error('[Aria2 Downloader] ✗ File hosting download failed:', result.error);
+        // Use fetch to follow redirects and get the final URL
+        (async () => {
+          try {
+            console.log('[Aria2 Downloader] Fetching to resolve redirects:', url);
+            
+            // Fetch with redirect: 'follow' to get final URL
+            // Use HEAD request to avoid downloading the file
+            const response = await fetch(url, {
+              method: 'HEAD',
+              redirect: 'follow',
+              credentials: 'include', // Include cookies
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': downloadItem.referrer || ''
+              }
+            });
+            
+            // Get the final URL after all redirects
+            const finalUrl = response.url;
+            console.log('[Aria2 Downloader] Final URL after redirects:', finalUrl);
+            
+            // Add to aria2 with the FINAL URL (not the original)
+            const result = await addDownload(finalUrl, finalFilename, {
+              pageUrl: downloadItem.referrer || url,
+              pageTitle: 'Browser Download (File Host)'
+            });
+            
+            if (result.success) {
+              console.log('[Aria2 Downloader] ✓ File hosting download added with final URL');
+            } else {
+              console.error('[Aria2 Downloader] ✗ File hosting download failed:', result.error);
+            }
+          } catch (error) {
+            console.error('[Aria2 Downloader] ✗ Failed to resolve final URL:', error);
+            
+            // Fallback to original URL
+            const result = await addDownload(url, finalFilename, {
+              pageUrl: downloadItem.referrer || url,
+              pageTitle: 'Browser Download (File Host)'
+            });
+            
+            if (!result.success) {
+              console.error('[Aria2 Downloader] ✗ Fallback also failed:', result.error);
+            }
           }
-        });
+        })();
       } else {
         // Normal downloads - add asynchronously
         (async () => {
