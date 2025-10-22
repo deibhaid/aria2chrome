@@ -1560,6 +1560,26 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       return;
     }
     
+    // Also ignore known file hosting sites with very short-lived links
+    // These sites are incompatible with download interception due to instant expiration
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    const fileHostingSites = [
+      'gofile.io',
+      'multiup.io', 
+      'multiup.org',
+      'pixeldrain.com',
+      'krakenfiles.com',
+      'bunkr.is',
+      'bunkr.si'
+    ];
+    
+    if (fileHostingSites.some(site => hostname.includes(site))) {
+      console.log('[Aria2 Downloader] File hosting site detected, links expire too fast to intercept:', hostname);
+      suggest();
+      return;
+    }
+    
     // Check if this is a download we should ignore (prevents loops)
     const downloadKey = `${url}|${filename}`;
     if (ignoreNextDownloads.has(downloadKey)) {
@@ -1625,10 +1645,8 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
         }
       })();
       
-      // DON'T call suggest() - this prevents Chrome from proceeding with the download
-      // Download will be interrupted automatically
-      
-      // Don't return anything and don't call suggest() - Chrome download will be interrupted
+      // DON'T call suggest() - this prevents Chrome from downloading
+      // The download will be cancelled automatically when we don't respond
     } else {
       console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
       suggest();
