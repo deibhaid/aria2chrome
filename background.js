@@ -1599,14 +1599,23 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     if (matchesExtension) {
       console.log('[Aria2 Downloader] ✓ Browser download intercepted:', downloadItem);
       
-      // Cancel the Chrome download immediately
+      // Cancel the Chrome download IMMEDIATELY (synchronously, before any async operations)
+      // This must be done first to prevent Chrome from actually downloading
       console.log('[Aria2 Downloader] Cancelling Chrome download ID:', downloadItem.id);
-      try {
-        await chrome.downloads.cancel(downloadItem.id);
-        console.log('[Aria2 Downloader] Chrome download cancelled successfully');
-      } catch (error) {
-        console.error('[Aria2 Downloader] Failed to cancel Chrome download:', error);
-      }
+      chrome.downloads.cancel(downloadItem.id, () => {
+        if (chrome.runtime.lastError) {
+          console.error('[Aria2 Downloader] Failed to cancel Chrome download:', chrome.runtime.lastError);
+        } else {
+          console.log('[Aria2 Downloader] ✓ Chrome download cancelled successfully');
+        }
+      });
+      
+      // Also erase it immediately to prevent it from showing in download bar
+      chrome.downloads.erase({ id: downloadItem.id }, () => {
+        if (chrome.runtime.lastError) {
+          console.log('[Aria2 Downloader] Could not erase yet (will try again later)');
+        }
+      });
       
       // Extract filename from downloadItem
       let finalFilename = filename;
@@ -1629,14 +1638,9 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       });
       
       if (result.success) {
-        console.log('[Aria2 Downloader] Download added to aria2 successfully');
-        // Remove the cancelled download from Chrome's download list
-        setTimeout(() => {
-          console.log('[Aria2 Downloader] Erasing Chrome download from history');
-          chrome.downloads.erase({ id: downloadItem.id });
-        }, 1000);
+        console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
       } else {
-        console.error('[Aria2 Downloader] Failed to add to aria2:', result.error);
+        console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
       }
     } else {
       console.log('[Aria2 Downloader] Download does not match configured extensions, allowing Chrome download');
