@@ -1597,10 +1597,16 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     });
     
     if (matchesExtension) {
-      console.log('[Aria2 Downloader] Browser download intercepted:', downloadItem);
+      console.log('[Aria2 Downloader] ✓ Browser download intercepted:', downloadItem);
       
       // Cancel the Chrome download immediately
-      await chrome.downloads.cancel(downloadItem.id);
+      console.log('[Aria2 Downloader] Cancelling Chrome download ID:', downloadItem.id);
+      try {
+        await chrome.downloads.cancel(downloadItem.id);
+        console.log('[Aria2 Downloader] Chrome download cancelled successfully');
+      } catch (error) {
+        console.error('[Aria2 Downloader] Failed to cancel Chrome download:', error);
+      }
       
       // Extract filename from downloadItem
       let finalFilename = filename;
@@ -1623,11 +1629,17 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       });
       
       if (result.success) {
+        console.log('[Aria2 Downloader] Download added to aria2 successfully');
         // Remove the cancelled download from Chrome's download list
         setTimeout(() => {
+          console.log('[Aria2 Downloader] Erasing Chrome download from history');
           chrome.downloads.erase({ id: downloadItem.id });
         }, 1000);
+      } else {
+        console.error('[Aria2 Downloader] Failed to add to aria2:', result.error);
       }
+    } else {
+      console.log('[Aria2 Downloader] Download does not match configured extensions, allowing Chrome download');
     }
   } catch (error) {
     console.error('[Aria2 Downloader] Error intercepting download:', error);
