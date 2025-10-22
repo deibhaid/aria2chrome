@@ -1560,25 +1560,9 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       return;
     }
     
-    // Also ignore known file hosting sites with very short-lived links
-    // These sites are incompatible with download interception due to instant expiration
+    // Parse URL
     const urlObj = new URL(url);
     const hostname = urlObj.hostname.toLowerCase();
-    const fileHostingSites = [
-      'gofile.io',
-      'multiup.io', 
-      'multiup.org',
-      'pixeldrain.com',
-      'krakenfiles.com',
-      'bunkr.is',
-      'bunkr.si'
-    ];
-    
-    if (fileHostingSites.some(site => hostname.includes(site))) {
-      console.log('[Aria2 Downloader] File hosting site detected, links expire too fast to intercept:', hostname);
-      suggest();
-      return;
-    }
     
     // Check if this is a download we should ignore (prevents loops)
     const downloadKey = `${url}|${filename}`;
@@ -1630,20 +1614,42 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       // Remove any path from filename
       finalFilename = finalFilename.split(/[/\\]/).pop();
       
-      // Add to aria2 IMMEDIATELY (don't wait for interrupt)
-      // This prevents the link from expiring
-      (async () => {
-        const result = await addDownload(url, finalFilename, {
-          pageUrl: downloadItem.referrer || url,
-          pageTitle: 'Browser Download'
-        });
+      // For file hosting sites with expiring links, add to aria2 with HIGHEST PRIORITY
+      // This must be INSTANT - no async delays
+      const isFileHostingSite = hostname.includes('gofile.io') || 
+                                 hostname.includes('multiup.io') ||
+                                 hostname.includes('multiup.org') ||
+                                 hostname.includes('pixeldrain.com');
+      
+      if (isFileHostingSite) {
+        console.log('[Aria2 Downloader] ⚠️ File hosting site - adding to aria2 with MAXIMUM PRIORITY');
         
-        if (result.success) {
-          console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
-        } else {
-          console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
-        }
-      })();
+        // Use Promise to add synchronously (blocking)
+        addDownload(url, finalFilename, {
+          pageUrl: downloadItem.referrer || url,
+          pageTitle: 'Browser Download (File Host)'
+        }).then(result => {
+          if (result.success) {
+            console.log('[Aria2 Downloader] ✓ File hosting download added successfully');
+          } else {
+            console.error('[Aria2 Downloader] ✗ File hosting download failed:', result.error);
+          }
+        });
+      } else {
+        // Normal downloads - add asynchronously
+        (async () => {
+          const result = await addDownload(url, finalFilename, {
+            pageUrl: downloadItem.referrer || url,
+            pageTitle: 'Browser Download'
+          });
+          
+          if (result.success) {
+            console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
+          } else {
+            console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
+          }
+        })();
+      }
       
       // DON'T call suggest() - this prevents Chrome from downloading
       // The download will be cancelled automatically when we don't respond

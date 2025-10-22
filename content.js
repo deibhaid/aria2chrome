@@ -181,13 +181,14 @@ document.addEventListener('click', function(event) {
   
   let target = event.target;
   
-  // Traverse up to find anchor tag
-  while (target && target.tagName !== 'A') {
+  // Traverse up to find anchor tag or button
+  while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON') {
     target = target.parentElement;
   }
   
   console.log('[Aria2 Downloader] After traversal, target:', target ? target.tagName : 'null');
   
+  // Handle link clicks
   if (target && target.tagName === 'A') {
     const href = target.href;
     const downloadAttr = target.getAttribute('download') || '';
@@ -242,6 +243,35 @@ document.addEventListener('click', function(event) {
           showNotification('Error', response?.error || 'Failed to add to aria2 queue');
         }
       });
+    }
+  }
+  
+  // Handle button clicks on file hosting sites (special case)
+  if (target && target.tagName === 'BUTTON') {
+    const buttonText = (target.textContent || target.innerText || '').toLowerCase().trim();
+    const hostname = window.location.hostname.toLowerCase();
+    
+    // Check if this is a download button on a known file hosting site
+    const isFileHostingSite = hostname.includes('gofile.io') || 
+                               hostname.includes('multiup.io') ||
+                               hostname.includes('multiup.org');
+    
+    const isDownloadButton = buttonText.includes('download') || 
+                             buttonText.includes('télécharger') ||
+                             target.classList.contains('download') ||
+                             target.id.includes('download');
+    
+    if (isFileHostingSite && isDownloadButton) {
+      console.log('[Aria2 Downloader] Download button detected on file hosting site');
+      
+      // Don't prevent default yet - we need to let the site process first
+      // Instead, we'll monitor for the download event that follows
+      
+      // Mark that we're expecting a download
+      window.__aria2_expecting_download = true;
+      window.__aria2_download_timestamp = Date.now();
+      
+      console.log('[Aria2 Downloader] Marked as expecting download from button click');
     }
   }
 }, true);
