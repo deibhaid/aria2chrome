@@ -229,23 +229,41 @@ function isDuplicateDownload(url, filename) {
     console.log('[Aria2 Downloader] Existing:', pausedDuplicate.completedLength, '/', pausedDuplicate.totalLength, `(${progress}%)`);
     console.log('[Aria2 Downloader] New URL detected - this appears to be a fresh link for the same file!');
     
-    // Automatically update the URL and notify user
+    // Automatically update the URL and resume immediately (links expire quickly!)
     pausedDuplicate.url = url;
     pausedDuplicate.retryCount = 0;
     pausedDuplicate.lastRetryTime = 0;
-    pausedDuplicate.status = 'paused';
+    pausedDuplicate.status = 'paused'; // Will be set to active when resumed
     
     saveDownloads();
     
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Download Link Updated!',
-      message: `${filename} (${progress}% complete) has been updated with a fresh URL. Click Resume to complete the download!`,
-      priority: 2
-    });
+    // Auto-resume immediately to prevent link expiration
+    console.log('[Aria2 Downloader] Auto-resuming immediately to prevent link expiration');
     
-    console.log('[Aria2 Downloader] Automatically updated URL for existing download. User can now resume from', progress + '%');
+    // Resume asynchronously - don't wait for it
+    (async () => {
+      const resumeResult = await resumeDownload(pausedDuplicate.gid);
+      
+      if (resumeResult.success) {
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Download Auto-Resumed!',
+          message: `${filename} (${progress}% complete) has been resumed with a fresh URL!`,
+          priority: 2
+        });
+        console.log('[Aria2 Downloader] ✓ Auto-resume successful for:', filename);
+      } else {
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Download Link Updated',
+          message: `${filename} URL updated but auto-resume failed. Click Resume to try again.`,
+          priority: 1
+        });
+        console.log('[Aria2 Downloader] ✗ Auto-resume failed:', resumeResult.error);
+      }
+    })();
     
     // Prevent creating duplicate - we updated the existing one instead
     return true;
@@ -734,14 +752,99 @@ async function resumeDownload(gid) {
         return { success: false, error: 'Failed to resume: ' + e.message };
       }
     } else if (status.status === 'error') {
-      // For error status, try to restart it in aria2c
+      // Downloads in error state cannot be unpaused - must be removed and re-added
+      console.log('[Aria2 Downloader] Download in error state, removing and re-adding with fresh session');
+      
+      // Mark as resuming to prevent race conditions
+      download.resuming = true;
+      
       try {
-        await aria2RPC('aria2.unpause', [gid]);
-        return { success: true, message: 'Download restarted' };
-      } catch (e) {
-        // If unpause fails, the download is probably gone - will be handled next cycle
-        console.log('[Aria2 Downloader] Failed to restart download in error state');
-        return { success: false, error: 'Download error persists: ' + e.message };
+        // Remove the errored download from aria2
+        try {
+          await aria2RPC('aria2.remove', [gid]);
+        } catch (e) {
+          // If remove fails, try removeDownloadResult
+          try {
+            await aria2RPC('aria2.removeDownloadResult', [gid]);
+          } catch (e2) {
+            // Ignore - download might already be removed
+          }
+        }
+        
+        // Re-add with fresh cookies and headers
+        const options = {
+          out: download.filename,
+          continue: 'true',
+          'allow-overwrite': 'true',
+          'max-connection-per-server': '16',
+          split: '16',
+          'min-split-size': '1M'
+        };
+        
+        if (aria2Config.downloadDir) {
+          options.dir = expandPath(aria2Config.downloadDir);
+        }
+        
+        // Get FRESH cookies from browser
+        const cookies = await getCookiesForUrl(download.url);
+        const headers = [];
+        
+        if (cookies) {
+          headers.push(`Cookie: ${cookies}`);
+          console.log('[Aria2 Downloader] Using fresh cookies from browser for error recovery');
+        }
+        
+        // Add browser headers
+        headers.push('User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        headers.push('Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/avif,*/*;q=0.8');
+        headers.push('Accept-Language: en-US,en;q=0.9');
+        headers.push('Accept-Encoding: gzip, deflate, br');
+        headers.push('DNT: 1');
+        headers.push('Connection: keep-alive');
+        headers.push('Upgrade-Insecure-Requests: 1');
+        headers.push('Sec-Fetch-Dest: document');
+        headers.push('Sec-Fetch-Mode: navigate');
+        headers.push('Sec-Fetch-Site: none');
+        headers.push('Sec-Fetch-User: ?1');
+        headers.push('Cache-Control: max-age=0');
+        
+        if (download.pageUrl) {
+          headers.push(`Referer: ${download.pageUrl}`);
+        }
+        
+        options.header = headers;
+        
+        console.log('[Aria2 Downloader] Re-adding errored download with fresh session');
+        
+        // Re-add to aria2c with NEW gid
+        const newGid = await aria2RPC('aria2.addUri', [[download.url], options]);
+        
+        // Update the SAME download entry with new gid
+        const oldGid = download.gid;
+        download.gid = newGid;
+        download.status = 'active';
+        download.resuming = false;
+        
+        // Move download from old gid to new gid
+        delete downloads[oldGid];
+        downloads[newGid] = download;
+        
+        await saveDownloads();
+        
+        console.log('[Aria2 Downloader] Successfully recovered from error state with new gid:', newGid, '(old:', oldGid + ')');
+        
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Download Recovered',
+          message: `${download.filename} recovered from error and resumed!`
+        });
+        
+        return { success: true, message: 'Download recovered from error' };
+      } catch (error) {
+        download.resuming = false;
+        console.error('[Aria2 Downloader] Failed to recover from error:', error);
+        return { success: false, error: 'Failed to recover from error: ' + error.message };
       }
     }
     
