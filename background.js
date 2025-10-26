@@ -1672,18 +1672,6 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     const url = downloadItem.url;
     const filename = downloadItem.filename || '';
     
-    // Skip vadapav.mov - their links expire too quickly for aria2
-    try {
-      const urlObj = new URL(url);
-      if (urlObj.hostname.toLowerCase().includes('vadapav.mov')) {
-        console.log('[Aria2 Downloader] Skipping vadapav.mov (expires too quickly)');
-        suggest();
-        return;
-      }
-    } catch (e) {
-      // URL parsing failed, continue
-    }
-    
     // Check forced ignore list first
     if (shouldIgnoreDownload(url, filename)) {
       suggest();
@@ -1728,129 +1716,18 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     });
     
     if (matchesExtension) {
-      console.log('[Aria2 Downloader] ✓ Intercepting download, will send to aria2 immediately');
+      console.log('[Aria2 Downloader] ✓ Intercepting download, will cancel and add to aria2');
       
-      // Extract final filename
-      let finalFilename = filename;
-      if (!finalFilename) {
-        try {
-          const urlObj = new URL(url);
-          finalFilename = urlObj.pathname.split('/').pop() || 'download';
-        } catch (e) {
-          finalFilename = 'download_' + Date.now();
-        }
-      }
-      
-      // Remove any path from filename
-      finalFilename = finalFilename.split(/[/\\]/).pop();
-      
-      // Use declarativeNetRequest to BLOCK this download at network level
-      const ruleId = ruleIdCounter++;
-      const urlPattern = url.split('?')[0] + '*'; // Match URL with any query params
-      
-      console.log('[Aria2 Downloader] Creating network block rule for:', urlPattern);
-      
-      // Create a dynamic rule to block this specific download
-      chrome.declarativeNetRequest.updateDynamicRules({
-        addRules: [{
-          id: ruleId,
-          priority: 1,
-          action: { type: 'block' },
-          condition: {
-            urlFilter: urlPattern,
-            resourceTypes: ['main_frame', 'sub_frame']
-          }
-        }],
-        removeRuleIds: []
-      }, () => {
-        if (chrome.runtime.lastError) {
-          console.error('[Aria2 Downloader] Failed to add block rule:', chrome.runtime.lastError);
-        } else {
-          console.log('[Aria2 Downloader] ✓ Network block rule added, Chrome will not download');
-          
-          // Remove the rule after 10 seconds (cleanup)
-          setTimeout(() => {
-            chrome.declarativeNetRequest.updateDynamicRules({
-              addRules: [],
-              removeRuleIds: [ruleId]
-            });
-          }, 10000);
-        }
+      // Store download info to intercept after Chrome resolves the URL
+      downloadsToIntercept.set(downloadItem.id, {
+        url: url,
+        filename: filename,
+        referrer: downloadItem.referrer
       });
       
-      // For file hosting sites with expiring links, use fetch to follow redirects
-      const isFileHostingSite = hostname.includes('gofile.io') || 
-                                 hostname.includes('multiup.io') ||
-                                 hostname.includes('multiup.org') ||
-                                 hostname.includes('pixeldrain.com');
-      
-      if (isFileHostingSite) {
-        console.log('[Aria2 Downloader] ⚠️ File hosting site - using fetch to resolve final URL');
-        
-        // Use fetch to follow redirects and get the final URL
-        (async () => {
-          try {
-            console.log('[Aria2 Downloader] Fetching to resolve redirects:', url);
-            
-            // Fetch with redirect: 'follow' to get final URL
-            // Use HEAD request to avoid downloading the file
-            const response = await fetch(url, {
-              method: 'HEAD',
-              redirect: 'follow',
-              credentials: 'include', // Include cookies
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': downloadItem.referrer || ''
-              }
-            });
-            
-            // Get the final URL after all redirects
-            const finalUrl = response.url;
-            console.log('[Aria2 Downloader] Final URL after redirects:', finalUrl);
-            
-            // Add to aria2 with the FINAL URL (not the original)
-            const result = await addDownload(finalUrl, finalFilename, {
-              pageUrl: downloadItem.referrer || url,
-              pageTitle: 'Browser Download (File Host)'
-            });
-            
-            if (result.success) {
-              console.log('[Aria2 Downloader] ✓ File hosting download added with final URL');
-            } else {
-              console.error('[Aria2 Downloader] ✗ File hosting download failed:', result.error);
-            }
-          } catch (error) {
-            console.error('[Aria2 Downloader] ✗ Failed to resolve final URL:', error);
-            
-            // Fallback to original URL
-            const result = await addDownload(url, finalFilename, {
-              pageUrl: downloadItem.referrer || url,
-              pageTitle: 'Browser Download (File Host)'
-            });
-            
-            if (!result.success) {
-              console.error('[Aria2 Downloader] ✗ Fallback also failed:', result.error);
-            }
-          }
-        })();
-      } else {
-        // Normal downloads - add asynchronously
-        (async () => {
-          const result = await addDownload(url, finalFilename, {
-            pageUrl: downloadItem.referrer || url,
-            pageTitle: 'Browser Download'
-          });
-          
-          if (result.success) {
-            console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
-          } else {
-            console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
-          }
-        })();
-      }
-      
-      // Call suggest to acknowledge but Chrome won't download due to network block
-      suggest();
+      // Cancel the download - we'll add it to aria2 in onChanged
+      suggest({ cancel: true });
+      return;
     } else {
       console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
       suggest();
@@ -1861,12 +1738,40 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   }
 });
 
-// Handle cancelled downloads - clean up Chrome download history
+// Handle cancelled downloads - add them to aria2
 chrome.downloads.onChanged.addListener(async (delta) => {
-  // Check if this download was interrupted and is one we intercepted
+  // Check if this download was cancelled and is one we want to intercept
   if (delta.state && delta.state.current === 'interrupted' && downloadsToIntercept.has(delta.id)) {
-    console.log('[Aria2 Downloader] Chrome download interrupted (as expected), cleaning up');
+    const downloadInfo = downloadsToIntercept.get(delta.id);
     downloadsToIntercept.delete(delta.id);
+    
+    console.log('[Aria2 Downloader] Download interrupted (as expected), adding to aria2:', downloadInfo);
+    
+    // Extract filename
+    let finalFilename = downloadInfo.filename;
+    if (!finalFilename) {
+      try {
+        const urlObj = new URL(downloadInfo.url);
+        finalFilename = urlObj.pathname.split('/').pop() || 'download';
+      } catch (e) {
+        finalFilename = 'download_' + Date.now();
+      }
+    }
+    
+    // Remove any path from filename
+    finalFilename = finalFilename.split(/[/\\]/).pop();
+    
+    // Add to aria2
+    const result = await addDownload(downloadInfo.url, finalFilename, {
+      pageUrl: downloadInfo.referrer || downloadInfo.url,
+      pageTitle: 'Browser Download'
+    });
+    
+    if (result.success) {
+      console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
+    } else {
+      console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
+    }
     
     // Erase from Chrome download history
     chrome.downloads.erase({ id: delta.id }, () => {
