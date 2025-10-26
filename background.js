@@ -1725,8 +1725,19 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
         referrer: downloadItem.referrer
       });
       
-      // Cancel the download - we'll add it to aria2 in onChanged
-      suggest({ cancel: true });
+      // First acknowledge with suggest()
+      suggest();
+      
+      // Then cancel the download asynchronously - we'll add it to aria2 in onChanged
+      setTimeout(() => {
+        chrome.downloads.cancel(downloadItem.id, () => {
+          if (chrome.runtime.lastError) {
+            console.log('[Aria2 Downloader] Could not cancel download:', chrome.runtime.lastError.message);
+          } else {
+            console.log('[Aria2 Downloader] Download cancelled, will be added to aria2');
+          }
+        });
+      }, 100); // Small delay to ensure Chrome has created the download
       return;
     } else {
       console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
