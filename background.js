@@ -553,8 +553,8 @@ async function smartRetry(gid) {
     
     console.log(`[Aria2 Downloader] Retry attempt ${download.retryCount}/${MAX_RETRY_ATTEMPTS} for:`, download.filename);
     
-    // Attempt resume
-    return await resumeDownload(gid);
+    // Attempt resume (automatic, not manual)
+    return await resumeDownload(gid, false);
   } catch (error) {
     return { success: false, error: error.message };
   }
