@@ -561,7 +561,8 @@ async function smartRetry(gid) {
 }
 
 // Resume incomplete download (NEVER creates new entry, only retries existing)
-async function resumeDownload(gid) {
+// manualResume: true = user clicked resume button, false = automatic retry from polling
+async function resumeDownload(gid, manualResume = true) {
   try {
     const download = downloads[gid];
     if (!download) {
@@ -573,12 +574,14 @@ async function resumeDownload(gid) {
       return { success: true, message: 'Download already complete' };
     }
     
-    // ALWAYS reset retry count for manual resume (allow user unlimited manual retries)
+    // Only reset retry count for MANUAL resume (allow user unlimited manual retries)
     // This ensures the resume button ALWAYS works, even for failed_permanently
     const wasFailedPermanently = download.status === 'failed_permanently';
-    console.log('[Aria2 Downloader] Manual resume requested - resetting retry counter');
-    download.retryCount = 0;
-    download.lastRetryTime = 0;
+    if (manualResume) {
+      console.log('[Aria2 Downloader] Manual resume requested - resetting retry counter');
+      download.retryCount = 0;
+      download.lastRetryTime = 0;
+    }
     
     // Reset status from failed_permanently to allow retry
     if (download.status === 'failed_permanently' || download.status === 'error') {
@@ -752,8 +755,17 @@ async function resumeDownload(gid) {
         return { success: false, error: 'Failed to resume: ' + e.message };
       }
     } else if (status.status === 'error') {
-      // Downloads in error state cannot be unpaused - must be removed and re-added
-      console.log('[Aria2 Downloader] Download in error state, removing and re-adding with fresh session');
+      // Downloads in error state cannot be unpaused
+      // Only attempt full recovery (remove & re-add) on MANUAL resume
+      if (!manualResume) {
+        // Automatic retry - just report the error, don't try to recover
+        console.log('[Aria2 Downloader] Download in error state (automatic retry) - not recovering');
+        download.resuming = false;
+        return { success: false, error: 'Download in error state - manual resume required' };
+      }
+      
+      // Manual resume - attempt full recovery
+      console.log('[Aria2 Downloader] Download in error state (manual resume), removing and re-adding with fresh session');
       
       // Mark as resuming to prevent race conditions
       download.resuming = true;
