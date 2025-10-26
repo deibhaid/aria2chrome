@@ -45,13 +45,21 @@ function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
     const pathname = urlObj.pathname.toLowerCase();
     const hostname = urlObj.hostname.toLowerCase();
     
+    // Completely skip vadapav.mov - let Chrome handle it natively
+    // Their download links expire too quickly for aria2 interception
+    if (hostname.includes('vadapav.mov')) {
+      console.log('[Aria2 Downloader] Skipping vadapav.mov (expires too quickly)');
+      return false;
+    }
+    
     // Don't intercept navigation links on known intermediary sites
     const intermediarySites = [
       'multiup.io',
       'uptobox.com', 
       'uploaded.net',
       'rapidgator.net',
-      '1fichier.com'
+      '1fichier.com',
+      'vadapav.mov'  // Generates temporary download links that expire quickly
     ];
     
     // If it's an intermediary site and URL just has filename in path (not actual download)

@@ -1672,6 +1672,18 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     const url = downloadItem.url;
     const filename = downloadItem.filename || '';
     
+    // Skip vadapav.mov - their links expire too quickly for aria2
+    try {
+      const urlObj = new URL(url);
+      if (urlObj.hostname.toLowerCase().includes('vadapav.mov')) {
+        console.log('[Aria2 Downloader] Skipping vadapav.mov (expires too quickly)');
+        suggest();
+        return;
+      }
+    } catch (e) {
+      // URL parsing failed, continue
+    }
+    
     // Check forced ignore list first
     if (shouldIgnoreDownload(url, filename)) {
       suggest();
