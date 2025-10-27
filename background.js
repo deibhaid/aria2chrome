@@ -927,7 +927,12 @@ async function updateDownloadsStatus() {
       if (downloads[download.gid]) {
         const previousStatus = downloads[download.gid].status;
         
-        downloads[download.gid].status = download.status;
+        // Don't overwrite failed_permanently status with error status
+        // This prevents retry spam for permanently failed downloads
+        if (previousStatus !== 'failed_permanently') {
+          downloads[download.gid].status = download.status;
+        }
+        
         downloads[download.gid].totalLength = download.totalLength;
         downloads[download.gid].completedLength = download.completedLength;
         downloads[download.gid].downloadSpeed = download.downloadSpeed;
