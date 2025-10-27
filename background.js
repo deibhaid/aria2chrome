@@ -1718,15 +1718,29 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
     if (matchesExtension) {
       console.log('[Aria2 Downloader] ✓ Intercepting download, will cancel and add to aria2');
       
+      // Extract final filename
+      let finalFilename = filename;
+      if (!finalFilename) {
+        try {
+          const urlObj = new URL(url);
+          finalFilename = urlObj.pathname.split('/').pop() || 'download';
+        } catch (e) {
+          finalFilename = 'download_' + Date.now();
+        }
+      }
+      
+      // Remove any path from filename
+      finalFilename = finalFilename.split(/[/\\]/).pop();
+      
       // Store download info to intercept after Chrome resolves the URL
       downloadsToIntercept.set(downloadItem.id, {
         url: url,
-        filename: filename,
+        filename: finalFilename,
         referrer: downloadItem.referrer
       });
       
-      // First acknowledge with suggest()
-      suggest();
+      // Acknowledge with the filename, then cancel
+      suggest({ filename: finalFilename, conflict_action: 'uniquify' });
       
       // Then cancel the download asynchronously - we'll add it to aria2 in onChanged
       setTimeout(() => {
