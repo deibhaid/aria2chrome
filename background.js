@@ -21,6 +21,8 @@ let lastTooltipText = '';
 let backupInterval = null;
 let interceptionEnabled = true; // Track if download interception is enabled
 let ignoreNextDownloads = new Set(); // Track downloads to ignore (prevent loops)
+const directoryIndexTabs = new Map(); // Track tabs that expose HTTP directory listings
+const DIRECTORY_CONTEXT_MENU_ID = 'aria2chrome-download-directory';
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -77,6 +79,107 @@ function shouldIgnoreDownload(url, filename) {
   return false;
 }
 
+// ----- Context Menu Helpers -----
+
+function setupContextMenus() {
+  if (!chrome.contextMenus) {
+    return;
+  }
+  
+  chrome.contextMenus.removeAll(() => {
+    const err = chrome.runtime.lastError;
+    if (err && !err.message.includes('No context menus to remove')) {
+      console.warn('[Aria2 Downloader] contextMenus.removeAll warning:', err.message);
+    }
+    
+    chrome.contextMenus.create({
+      id: DIRECTORY_CONTEXT_MENU_ID,
+      title: 'Aria2Chrome: Download all files in directory',
+      contexts: ['page'],
+      visible: false
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Aria2 Downloader] Failed to create context menu:', chrome.runtime.lastError.message);
+      } else {
+        console.log('[Aria2 Downloader] Context menu created');
+      }
+    });
+  });
+}
+
+function updateDirectoryContextMenu(tabId) {
+  if (!chrome.contextMenus) return;
+  
+  const entry = tabId !== undefined ? directoryIndexTabs.get(tabId) : null;
+  const visible = !!entry;
+  const baseTitle = 'Aria2Chrome: Download all files in directory';
+  const title = entry && entry.fileCount ? `${baseTitle} (${entry.fileCount})` : baseTitle;
+  
+  chrome.contextMenus.update(DIRECTORY_CONTEXT_MENU_ID, { visible, title }, () => {
+    const err = chrome.runtime.lastError;
+    if (err && err.message.includes('Cannot find menu item')) {
+      // Menu might not exist yet (service worker just restarted) - recreate
+      setupContextMenus();
+    }
+  });
+}
+
+function recordDirectoryListingStatus(tabId, hasListing, fileCount = 0) {
+  if (tabId === undefined || tabId === null) {
+    return;
+  }
+  
+  if (hasListing && fileCount > 0) {
+    directoryIndexTabs.set(tabId, { fileCount });
+  } else {
+    directoryIndexTabs.delete(tabId);
+  }
+  
+  updateDirectoryContextMenu(tabId);
+}
+
+// Initialize context menus on service worker load
+setupContextMenus();
+
+if (chrome.contextMenus) {
+  chrome.contextMenus.onShown.addListener((info, tab) => {
+    if (!tab) return;
+    updateDirectoryContextMenu(tab.id);
+    if (chrome.contextMenus.refresh) {
+      chrome.contextMenus.refresh();
+    }
+  });
+  
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId !== DIRECTORY_CONTEXT_MENU_ID || !tab || tab.id === undefined) {
+      return;
+    }
+    
+    if (!chrome.tabs || !chrome.tabs.sendMessage) {
+      return;
+    }
+    
+    chrome.tabs.sendMessage(tab.id, { action: 'triggerDirectoryDownloadAll' }, response => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        console.warn('[Aria2 Downloader] Failed to notify content script for directory download:', err.message);
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: 'icons/icon48.png',
+          title: 'Aria2Chrome',
+          message: 'Could not access this page to download all files. Try reloading.'
+        });
+      }
+    });
+  });
+}
+
+if (chrome.tabs && chrome.tabs.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    directoryIndexTabs.delete(tabId);
+  });
+}
+
 // Load configuration on startup
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Check install reason
@@ -91,6 +194,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   await loadConfig();
   startPolling();
   startBackupSchedule();
+  setupContextMenus();
   
   // Show welcome notification on first install
   if (details.reason === 'install') {
@@ -108,6 +212,7 @@ chrome.runtime.onStartup.addListener(async () => {
   await loadConfig();
   startPolling();
   startBackupSchedule();
+  setupContextMenus();
 });
 
 // Backup before extension unloads (uninstall, disable, or update)
@@ -1414,6 +1519,75 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'startQueuedDownload':
         const queuedResult = await startQueuedDownloadManually(request.queueId);
         sendResponse(queuedResult);
+        break;
+        
+      case 'directoryListingStatus':
+        if (sender.tab && sender.tab.id !== undefined) {
+          recordDirectoryListingStatus(
+            sender.tab.id,
+            !!request.hasListing,
+            request.fileCount || 0
+          );
+        }
+        sendResponse({ success: true });
+        break;
+        
+      case 'downloadMultiple':
+        const downloadsRequest = Array.isArray(request.downloads) ? request.downloads : [];
+        if (downloadsRequest.length === 0) {
+          sendResponse({ success: false, error: 'No downloads specified' });
+          break;
+        }
+        
+        const batchResults = [];
+        let addedCount = 0;
+        let duplicateCount = 0;
+        let failureCount = 0;
+        
+        for (const item of downloadsRequest) {
+          if (!item || !item.url || !item.filename) {
+            batchResults.push({
+              url: item?.url || null,
+              filename: item?.filename || null,
+              success: false,
+              error: 'Invalid download request'
+            });
+            failureCount += 1;
+            continue;
+          }
+          
+          const metadata = {
+            pageUrl: item.pageUrl || sender?.tab?.url || '',
+            pageTitle: item.pageTitle || sender?.tab?.title || ''
+          };
+          
+          const result = await addDownload(item.url, item.filename, metadata);
+          
+          if (result.success) {
+            addedCount += 1;
+          } else if (result.duplicate) {
+            duplicateCount += 1;
+          } else {
+            failureCount += 1;
+          }
+          
+          batchResults.push({
+            url: item.url,
+            filename: item.filename,
+            success: !!result.success,
+            duplicate: !!result.duplicate,
+            error: result.error || null
+          });
+        }
+        
+        sendResponse({
+          success: addedCount > 0 || duplicateCount > 0,
+          total: downloadsRequest.length,
+          added: addedCount,
+          duplicates: duplicateCount,
+          failures: failureCount,
+          results: batchResults
+        });
         break;
         
       default:

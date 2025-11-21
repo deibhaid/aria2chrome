@@ -11,6 +11,7 @@ A powerful Chrome extension that automatically captures download links and manag
 - 🎨 **Beautiful UI**: Modern, intuitive interface for managing your downloads
 - 🔔 **Notifications**: Get notified when downloads are added or completed
 - ⚙️ **Easy Configuration**: Simple setup with connection testing
+- 📂 **HTTP Directory Download-All**: Floating button and context menu on "Index of /" style pages to batch send every file in the open directory to aria2
 
 ## Screenshots
 
@@ -139,6 +140,17 @@ Open the extension popup to:
 - Pause/resume downloads
 - Remove downloads from the queue
 - Monitor completion status
+
+### Downloading Entire HTTP Directory Listings
+
+When you visit an open HTTP directory (for example, classic `Index of /` pages such as [https://docs.oasis-open.org/](https://docs.oasis-open.org/)), Aria2Chrome now injects a floating **“Aria2Chrome Download All”** button and exposes a right-click context menu entry. Use either control to:
+
+1. Detect every direct file link within the current directory (excludes `Parent Directory` and subfolders).
+2. Send each file to aria2 via JSON-RPC using the same cookies/referrer as your browser session.
+3. Show a toast summarizing how many files were added, skipped as duplicates, or failed.
+
+Prefer keyboard + mouse workflows? Right-click anywhere on the directory listing and choose **Aria2Chrome → Download all files in directory** to trigger the same batch job without scrolling to the floating action button.
+This is perfect for mirrors and standards archives that expose HTTP indexes without individual downloads pages.
 
 ### Supported Video Formats
 
@@ -369,7 +381,7 @@ For issues, questions, or feature requests, please:
 ## Roadmap
 
 Future features planned:
-- [ ] Batch download support
+- [x] Batch download support (HTTP directory "Download All")
 - [ ] Custom file naming patterns
 - [ ] Download history
 - [ ] Statistics and analytics

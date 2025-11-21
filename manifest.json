@@ -8,6 +8,7 @@
     "downloads",
     "notifications",
     "activeTab",
+    "contextMenus",
     "cookies",
     "webRequest",
     "declarativeNetRequest",
