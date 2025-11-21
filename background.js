@@ -142,36 +142,40 @@ function recordDirectoryListingStatus(tabId, hasListing, fileCount = 0) {
 setupContextMenus();
 
 if (chrome.contextMenus) {
-  chrome.contextMenus.onShown.addListener((info, tab) => {
-    if (!tab) return;
-    updateDirectoryContextMenu(tab.id);
-    if (chrome.contextMenus.refresh) {
-      chrome.contextMenus.refresh();
-    }
-  });
-  
-  chrome.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId !== DIRECTORY_CONTEXT_MENU_ID || !tab || tab.id === undefined) {
-      return;
-    }
-    
-    if (!chrome.tabs || !chrome.tabs.sendMessage) {
-      return;
-    }
-    
-    chrome.tabs.sendMessage(tab.id, { action: 'triggerDirectoryDownloadAll' }, response => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        console.warn('[Aria2 Downloader] Failed to notify content script for directory download:', err.message);
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: 'icons/icon48.png',
-          title: 'Aria2Chrome',
-          message: 'Could not access this page to download all files. Try reloading.'
-        });
+  if (chrome.contextMenus.onShown && chrome.contextMenus.onShown.addListener) {
+    chrome.contextMenus.onShown.addListener((info, tab) => {
+      if (!tab) return;
+      updateDirectoryContextMenu(tab.id);
+      if (chrome.contextMenus.refresh) {
+        chrome.contextMenus.refresh();
       }
     });
-  });
+  }
+  
+  if (chrome.contextMenus.onClicked && chrome.contextMenus.onClicked.addListener) {
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+      if (info.menuItemId !== DIRECTORY_CONTEXT_MENU_ID || !tab || tab.id === undefined) {
+        return;
+      }
+      
+      if (!chrome.tabs || !chrome.tabs.sendMessage) {
+        return;
+      }
+      
+      chrome.tabs.sendMessage(tab.id, { action: 'triggerDirectoryDownloadAll' }, response => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          console.warn('[Aria2 Downloader] Failed to notify content script for directory download:', err.message);
+          chrome.notifications.create({
+            type: 'basic',
+            iconUrl: 'icons/icon48.png',
+            title: 'Aria2Chrome',
+            message: 'Could not access this page to download all files. Try reloading.'
+          });
+        }
+      });
+    });
+  }
 }
 
 if (chrome.tabs && chrome.tabs.onRemoved) {
