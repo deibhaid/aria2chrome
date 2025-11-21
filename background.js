@@ -10,7 +10,7 @@ try {
 let aria2Config = {
   rpcUrl: 'http://localhost:6800/jsonrpc',
   secret: '',
-  downloadDir: '~/Downloads'
+  downloadDir: ''
 };
 
 let downloads = {}; // Track downloads by gid
@@ -250,8 +250,14 @@ if (chrome.tabs && chrome.tabs.onRemoved) {
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Check install reason
   if (details.reason === 'install') {
-  logInfo('Extension installed - attempting to restore from backup');
+    logInfo('Extension installed - attempting to restore from backup');
     await restoreFromBackup();
+    try {
+      chrome.runtime.openOptionsPage();
+      logInfo('Options page opened for initial setup');
+    } catch (error) {
+      logError('Failed to open options page on install', { error: error.message });
+    }
   } else if (details.reason === 'update') {
     logInfo('Extension updated - attempting to restore from backup');
     await restoreFromBackup();
@@ -457,6 +463,13 @@ async function addDownload(url, filename, metadata = {}) {
     logInfo('Interception disabled, skipping download', { url, filename });
     return { success: false, error: 'Download interception is disabled' };
   }
+
+  const configuredDir = (aria2Config.downloadDir || '').trim();
+  if (!configuredDir) {
+    const errorMessage = 'Download directory is not configured. Open Aria2Chrome settings and enter an absolute path like /home/you/Downloads.';
+    logError('Missing download directory configuration', { url, filename });
+    return { success: false, error: errorMessage };
+  }
   
   // Check for duplicates
   if (isDuplicateDownload(url, filename)) {
@@ -511,6 +524,7 @@ async function startDownload(url, filename, metadata = {}) {
   try {
     // Reload config to get latest download directory
     await loadConfig();
+    const configuredDir = (aria2Config.downloadDir || '').trim();
     
     // Only use aria2c for downloading - no duplicate Chrome download
     const options = {
@@ -527,9 +541,9 @@ async function startDownload(url, filename, metadata = {}) {
       'min-split-size': '1M'
     };
     
-    if (aria2Config.downloadDir) {
+    if (configuredDir) {
       // Expand and clean the path
-      options.dir = expandPath(aria2Config.downloadDir);
+      options.dir = expandPath(configuredDir);
       logInfo('Setting download directory for download', { dir: options.dir, filename });
     } else {
       logInfo('Using aria2 default download directory', { filename });
