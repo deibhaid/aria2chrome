@@ -303,7 +303,7 @@ function resetSettings() {
   if (confirm('Are you sure you want to reset all settings to defaults?')) {
     document.getElementById('rpcUrl').value = 'http://localhost:6800/jsonrpc';
     document.getElementById('secret').value = '';
-    document.getElementById('downloadDir').value = '~/Downloads';
+    document.getElementById('downloadDir').value = '';
     document.getElementById('autoResume').checked = true;
     document.getElementById('showNotifications').checked = true;
     
