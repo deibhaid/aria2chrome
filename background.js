@@ -27,6 +27,9 @@ const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_DELAYS = [5000, 15000, 60000]; // 5s, 15s, 60s (exponential backoff)
+const LOG_STORAGE_KEY = 'aria2Logs';
+const MAX_LOG_ENTRIES = 500;
+let logBuffer = null;
 
 // Forced ignore list - these downloads are NEVER intercepted
 const FORCED_IGNORE_LIST = {
@@ -70,13 +73,72 @@ function shouldIgnoreDownload(url, filename) {
   if (filename) {
     for (const pattern of FORCED_IGNORE_LIST.filenamePatterns) {
       if (pattern.test(filename)) {
-        console.log('[Aria2 Downloader] Ignoring download - filename pattern match:', pattern);
+    logInfo('Ignoring download due to filename pattern', { filename, pattern: pattern.toString() });
         return true;
       }
     }
   }
   
   return false;
+}
+
+// ----- Persistent Logging -----
+
+async function loadLogBuffer() {
+  if (logBuffer !== null) {
+    return logBuffer;
+  }
+  
+  try {
+    const result = await chrome.storage.local.get([LOG_STORAGE_KEY]);
+    logBuffer = result[LOG_STORAGE_KEY] || [];
+  } catch (error) {
+    console.warn('[Aria2 Downloader] Failed to load logs from storage:', error);
+    logBuffer = [];
+  }
+  
+  return logBuffer;
+}
+
+async function appendLog(level, message, context = {}) {
+  try {
+    const logs = await loadLogBuffer();
+    const entry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      context
+    };
+    
+    logs.push(entry);
+    
+    if (logs.length > MAX_LOG_ENTRIES) {
+      logs.splice(0, logs.length - MAX_LOG_ENTRIES);
+    }
+    
+    await chrome.storage.local.set({ [LOG_STORAGE_KEY]: logs });
+  } catch (error) {
+    console.warn('[Aria2 Downloader] Failed to append log entry:', error);
+  }
+}
+
+async function clearLogs() {
+  logBuffer = [];
+  try {
+    await chrome.storage.local.set({ [LOG_STORAGE_KEY]: logBuffer });
+  } catch (error) {
+    console.warn('[Aria2 Downloader] Failed to clear logs:', error);
+  }
+}
+
+function logInfo(message, context) {
+  console.log('[Aria2 Downloader]', message, context || '');
+  appendLog('info', message, context || {});
+}
+
+function logError(message, context) {
+  console.error('[Aria2 Downloader]', message, context || '');
+  appendLog('error', message, context || {});
 }
 
 // ----- Context Menu Helpers -----
@@ -188,10 +250,10 @@ if (chrome.tabs && chrome.tabs.onRemoved) {
 chrome.runtime.onInstalled.addListener(async (details) => {
   // Check install reason
   if (details.reason === 'install') {
-    console.log('[Aria2 Downloader] First time installation - checking for backup');
+  logInfo('Extension installed - attempting to restore from backup');
     await restoreFromBackup();
   } else if (details.reason === 'update') {
-    console.log('[Aria2 Downloader] Extension updated - preserving data');
+    logInfo('Extension updated - attempting to restore from backup');
     await restoreFromBackup();
   }
   
@@ -234,8 +296,11 @@ async function loadConfig() {
   if (result.interceptionEnabled !== undefined) {
     interceptionEnabled = result.interceptionEnabled;
   }
-  console.log('Aria2 config loaded:', aria2Config);
-  console.log('Interception enabled:', interceptionEnabled);
+  logInfo('Aria2 config loaded', {
+    rpcUrl: aria2Config.rpcUrl,
+    downloadDir: aria2Config.downloadDir,
+    interceptionEnabled
+  });
   
   // Update badge based on interception state
   updateBadgeColor();
@@ -246,6 +311,10 @@ async function saveConfig() {
   await chrome.storage.sync.set({ aria2Config });
   // Backup after config changes
   await saveBackupToStorage();
+  logInfo('Aria2 config saved', {
+    rpcUrl: aria2Config.rpcUrl,
+    downloadDir: aria2Config.downloadDir
+  });
 }
 
 // Aria2 RPC call wrapper
@@ -385,13 +454,13 @@ function isDuplicateDownload(url, filename) {
 async function addDownload(url, filename, metadata = {}) {
   // Don't add if interception is disabled
   if (!interceptionEnabled) {
-    console.log('[Aria2 Downloader] Interception disabled, skipping download');
+    logInfo('Interception disabled, skipping download', { url, filename });
     return { success: false, error: 'Download interception is disabled' };
   }
   
   // Check for duplicates
   if (isDuplicateDownload(url, filename)) {
-    console.log('[Aria2 Downloader] Duplicate download detected, skipping:', filename);
+    logInfo('Duplicate download detected, skipping', { url, filename });
     return { success: false, error: 'Download already exists', duplicate: true };
   }
   
@@ -413,7 +482,11 @@ async function addDownload(url, filename, metadata = {}) {
     downloads[queueId] = queuedDownload;
     await saveDownloads();
     
-    console.log('[Aria2 Downloader] Download queued:', filename, `(${downloadQueue.length} in queue)`);
+    logInfo('Download queued (max concurrent reached)', {
+      filename,
+      url,
+      queueLength: downloadQueue.length
+    });
     return { success: true, queued: true, queueId };
   }
   
@@ -457,9 +530,9 @@ async function startDownload(url, filename, metadata = {}) {
     if (aria2Config.downloadDir) {
       // Expand and clean the path
       options.dir = expandPath(aria2Config.downloadDir);
-      console.log('[Aria2 Downloader] Setting download directory:', options.dir);
+      logInfo('Setting download directory for download', { dir: options.dir, filename });
     } else {
-      console.log('[Aria2 Downloader] No download directory configured, using aria2 default');
+      logInfo('Using aria2 default download directory', { filename });
     }
     
     // Get FRESH cookies for this URL (critical for authenticated sites)
@@ -468,7 +541,7 @@ async function startDownload(url, filename, metadata = {}) {
     
     if (cookies) {
       headers.push(`Cookie: ${cookies}`);
-      console.log('[Aria2 Downloader] Adding fresh cookies for authenticated download');
+      logInfo('Attaching cookies for download', { hostname: new URL(url).hostname });
     }
     
     // Add comprehensive browser headers to simulate a real browser request
@@ -492,11 +565,15 @@ async function startDownload(url, filename, metadata = {}) {
     
     options.header = headers;
     
-    console.log('[Aria2 Downloader] aria2c options:', JSON.stringify(options, null, 2));
+    logInfo('Submitting aria2.addUri request', {
+      filename,
+      url,
+      dir: options.dir || 'aria2-default'
+    });
     
     const gid = await aria2RPC('aria2.addUri', [[url], options]);
     
-    console.log('[Aria2 Downloader] Download added to aria2c with gid:', gid);
+    logInfo('Download added to aria2', { filename, gid });
     
     // Store download information
     downloads[gid] = {
@@ -514,6 +591,7 @@ async function startDownload(url, filename, metadata = {}) {
     
     return { success: true, gid };
   } catch (error) {
+    logError('Failed to add download to aria2', { filename, url, error: error.message });
     // Show user-facing notification for download failures
     chrome.notifications.create({
       type: 'basic',
@@ -534,7 +612,10 @@ async function processQueue() {
     // Get most recent queued download (LIFO - Last In First Out)
     const queuedDownload = downloadQueue.pop();
     
-    console.log('[Aria2 Downloader] Auto-starting queued download:', queuedDownload.filename);
+    logInfo('Auto-starting queued download', {
+      filename: queuedDownload.filename,
+      queueRemaining: downloadQueue.length
+    });
     
     // Remove from downloads (will be re-added when started)
     delete downloads[queuedDownload.queueId];
@@ -574,7 +655,10 @@ async function startQueuedDownloadManually(queueId) {
     // Remove from downloads (will be re-added when started)
     delete downloads[queueId];
     
-    console.log('[Aria2 Downloader] Manually starting queued download:', queuedDownload.filename);
+    logInfo('Manually starting queued download', {
+      filename: queuedDownload.filename,
+      queueId
+    });
     
     // Start the download
     const result = await startDownload(
@@ -1533,6 +1617,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             request.fileCount || 0
           );
         }
+        logInfo('Directory listing status updated', {
+          tabId: sender.tab?.id,
+          hasListing: !!request.hasListing,
+          fileCount: request.fileCount || 0
+        });
         sendResponse({ success: true });
         break;
         
@@ -1543,6 +1632,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           break;
         }
         
+        logInfo('Processing batch download request', { count: downloadsRequest.length });
         const batchResults = [];
         let addedCount = 0;
         let duplicateCount = 0;
@@ -1592,6 +1682,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           failures: failureCount,
           results: batchResults
         });
+        logInfo('Batch download summary', {
+          total: downloadsRequest.length,
+          added: addedCount,
+          duplicates: duplicateCount,
+          failures: failureCount
+        });
+        break;
+        
+      case 'getLogs':
+        const logs = await loadLogBuffer();
+        sendResponse({ success: true, logs });
+        break;
+        
+      case 'clearLogs':
+        await clearLogs();
+        logInfo('Logs cleared manually via message');
+        sendResponse({ success: true });
         break;
         
       default:

@@ -150,6 +150,10 @@ When you visit an open HTTP directory (for example, classic `Index of /` pages s
 3. Show a toast summarizing how many files were added, skipped as duplicates, or failed.
 
 Prefer keyboard + mouse workflows? Right-click anywhere on the directory listing and choose **Aria2Chrome → Download all files in directory** to trigger the same batch job without scrolling to the floating action button.
+
+### Persistent Rolling Logs
+
+Aria2Chrome now keeps a rolling buffer (last 500 entries) of background events inside the browser at `chrome.storage.local` under the key `aria2Logs` (Chrome DevTools → Application → Storage → `chrome.storage.local` → `aria2Logs`). Use this when debugging queue issues or RPC failures—no filesystem access required.
 This is perfect for mirrors and standards archives that expose HTTP indexes without individual downloads pages.
 
 ### Supported Video Formats
