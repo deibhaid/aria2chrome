@@ -1,8 +1,6 @@
 // Content script to intercept file downloads
 
 let interceptionEnabled = true; // Track if interception is enabled
-const DIRECTORY_BUTTON_ID = 'aria2chrome-directory-download-btn';
-const DIRECTORY_STYLE_ID = 'aria2chrome-directory-download-style';
 
 // Default extensions (video files + archives)
 let FILE_EXTENSIONS = [
@@ -351,49 +349,6 @@ document.addEventListener('contextmenu', function(event) {
 
 // ----- HTTP Directory Index Support -----
 
-function ensureDirectoryButtonStyles() {
-  if (document.getElementById(DIRECTORY_STYLE_ID)) {
-    return;
-  }
-
-  const style = document.createElement('style');
-  style.id = DIRECTORY_STYLE_ID;
-  style.textContent = `
-    #${DIRECTORY_BUTTON_ID} {
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      z-index: 2147483647;
-      background: #0d6efd;
-      color: #fff;
-      border: none;
-      border-radius: 999px;
-      padding: 12px 20px;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      box-shadow: 0 8px 20px rgba(13, 110, 253, 0.35);
-      cursor: pointer;
-      transition: transform 0.1s ease, box-shadow 0.1s ease, background 0.1s ease;
-    }
-    
-    #${DIRECTORY_BUTTON_ID}:hover {
-      background: #0b5ed7;
-      transform: translateY(-1px);
-      box-shadow: 0 10px 24px rgba(13, 110, 253, 0.4);
-    }
-    
-    #${DIRECTORY_BUTTON_ID}:active {
-      transform: translateY(1px);
-      box-shadow: 0 6px 16px rgba(13, 110, 253, 0.35);
-    }
-  `;
-  const target = document.head || document.documentElement || document.body;
-  if (target) {
-    target.appendChild(style);
-  }
-}
-
 function hasDirectoryListingHeuristics() {
   if (!document.body) {
     return false;
@@ -486,26 +441,7 @@ function notifyDirectoryListingStatus(hasListing, fileCount = 0) {
   }
 }
 
-function injectDirectoryDownloadButton(fileCount) {
-  if (document.getElementById(DIRECTORY_BUTTON_ID)) {
-    const existing = document.getElementById(DIRECTORY_BUTTON_ID);
-    existing.textContent = `Aria2Chrome Download All (${fileCount})`;
-    return;
-  }
-  
-  ensureDirectoryButtonStyles();
-  
-  const button = document.createElement('button');
-  button.id = DIRECTORY_BUTTON_ID;
-  button.type = 'button';
-  button.textContent = `Aria2Chrome Download All (${fileCount})`;
-  button.title = 'Send every file in this directory listing to aria2 via JSON-RPC';
-  button.addEventListener('click', handleDirectoryDownloadAllClick);
-  
-  document.body.appendChild(button);
-}
-
-function processDirectoryDownloadAllRequest(triggerSource = 'button', callback) {
+function processDirectoryDownloadAllRequest(triggerSource = 'context-menu', callback) {
   const files = collectDirectoryFilesFromIndex();
   
   if (!files.length) {
@@ -550,10 +486,6 @@ function processDirectoryDownloadAllRequest(triggerSource = 'button', callback) 
   });
 }
 
-function handleDirectoryDownloadAllClick() {
-  processDirectoryDownloadAllRequest('floating-button');
-}
-
 function initializeDirectoryIndexSupport() {
   if (!['http:', 'https:'].includes(window.location.protocol)) {
     notifyDirectoryListingStatus(false, 0);
@@ -572,7 +504,6 @@ function initializeDirectoryIndexSupport() {
   }
   
   notifyDirectoryListingStatus(true, files.length);
-  injectDirectoryDownloadButton(files.length);
 }
 
 if (document.readyState === 'loading') {

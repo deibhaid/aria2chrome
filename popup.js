@@ -79,8 +79,27 @@ function renderDownloads() {
     return;
   }
   
-  // Sort by added time (newest first)
-  downloadsArray.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+  const statusPriority = {
+    active: 0,
+    waiting: 1,
+    queued: 2,
+    paused: 3,
+    error: 4,
+    failed_permanently: 5,
+    removed: 6,
+    complete: 7
+  };
+  
+  downloadsArray.sort((a, b) => {
+    const priorityA = statusPriority[a.status] !== undefined ? statusPriority[a.status] : 99;
+    const priorityB = statusPriority[b.status] !== undefined ? statusPriority[b.status] : 99;
+    
+    if (priorityA !== priorityB) {
+      return priorityA - priorityB;
+    }
+    
+    return (b.addedAt || 0) - (a.addedAt || 0);
+  });
   
   downloadsList.innerHTML = downloadsArray.map(download => {
     const progress = calculateProgress(download);

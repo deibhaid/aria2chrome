@@ -23,6 +23,7 @@ let interceptionEnabled = true; // Track if download interception is enabled
 let ignoreNextDownloads = new Set(); // Track downloads to ignore (prevent loops)
 const directoryIndexTabs = new Map(); // Track tabs that expose HTTP directory listings
 const DIRECTORY_CONTEXT_MENU_ID = 'aria2chrome-download-directory';
+const LINK_CONTEXT_MENU_ID = 'aria2chrome-download-link';
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -141,6 +142,20 @@ function logError(message, context) {
   appendLog('error', message, context || {});
 }
 
+function getFilenameFromUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const filename = pathname.split('/').filter(Boolean).pop();
+    if (filename) {
+      return decodeURIComponent(filename);
+    }
+  } catch (e) {
+    // ignore
+  }
+  return 'download_' + Date.now();
+}
+
 // ----- Context Menu Helpers -----
 
 function setupContextMenus() {
@@ -164,6 +179,16 @@ function setupContextMenus() {
         console.warn('[Aria2 Downloader] Failed to create context menu:', chrome.runtime.lastError.message);
       } else {
         console.log('[Aria2 Downloader] Context menu created');
+      }
+    });
+    
+    chrome.contextMenus.create({
+      id: LINK_CONTEXT_MENU_ID,
+      title: 'Aria2Chrome: Download this link',
+      contexts: ['link']
+    }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Aria2 Downloader] Failed to create link context menu:', chrome.runtime.lastError.message);
       }
     });
   });
@@ -200,6 +225,32 @@ function recordDirectoryListingStatus(tabId, hasListing, fileCount = 0) {
   updateDirectoryContextMenu(tabId);
 }
 
+async function handleLinkContextDownload(info, tab) {
+  const url = info.linkUrl;
+  const filename = getFilenameFromUrl(url);
+  const metadata = {
+    pageUrl: info.pageUrl || tab?.url || '',
+    pageTitle: tab?.title || ''
+  };
+  
+  const result = await addDownload(url, filename, metadata);
+  if (!result.success && !result.duplicate) {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'Aria2Chrome',
+      message: result.error || 'Failed to add download'
+    });
+  } else if (result.success && !result.queued) {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'Aria2Chrome',
+      message: `${filename} added to aria2`
+    });
+  }
+}
+
 // Initialize context menus on service worker load
 setupContextMenus();
 
@@ -216,26 +267,29 @@ if (chrome.contextMenus) {
   
   if (chrome.contextMenus.onClicked && chrome.contextMenus.onClicked.addListener) {
     chrome.contextMenus.onClicked.addListener((info, tab) => {
-      if (info.menuItemId !== DIRECTORY_CONTEXT_MENU_ID || !tab || tab.id === undefined) {
-        return;
-      }
-      
-      if (!chrome.tabs || !chrome.tabs.sendMessage) {
-        return;
-      }
-      
-      chrome.tabs.sendMessage(tab.id, { action: 'triggerDirectoryDownloadAll' }, response => {
-        const err = chrome.runtime.lastError;
-        if (err) {
-          console.warn('[Aria2 Downloader] Failed to notify content script for directory download:', err.message);
-          chrome.notifications.create({
-            type: 'basic',
-            iconUrl: 'icons/icon48.png',
-            title: 'Aria2Chrome',
-            message: 'Could not access this page to download all files. Try reloading.'
-          });
+      if (info.menuItemId === DIRECTORY_CONTEXT_MENU_ID) {
+        if (!tab || tab.id === undefined || !chrome.tabs || !chrome.tabs.sendMessage) {
+          return;
         }
-      });
+        
+        chrome.tabs.sendMessage(tab.id, { action: 'triggerDirectoryDownloadAll' }, response => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            console.warn('[Aria2 Downloader] Failed to notify content script for directory download:', err.message);
+            chrome.notifications.create({
+              type: 'basic',
+              iconUrl: 'icons/icon48.png',
+              title: 'Aria2Chrome',
+              message: 'Could not access this page to download all files. Try reloading.'
+            });
+          }
+        });
+      } else if (info.menuItemId === LINK_CONTEXT_MENU_ID) {
+        if (!info.linkUrl) {
+          return;
+        }
+        handleLinkContextDownload(info, tab);
+      }
     });
   }
 }

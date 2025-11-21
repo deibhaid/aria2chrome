@@ -143,13 +143,13 @@ Open the extension popup to:
 
 ### Downloading Entire HTTP Directory Listings
 
-When you visit an open HTTP directory (for example, classic `Index of /` pages such as [https://docs.oasis-open.org/](https://docs.oasis-open.org/)), Aria2Chrome now injects a floating **“Aria2Chrome Download All”** button and exposes a right-click context menu entry. Use either control to:
+When you visit an open HTTP directory (for example, classic `Index of /` pages such as [https://docs.oasis-open.org/](https://docs.oasis-open.org/)), simply right-click the page background and choose **Aria2Chrome → Download all files in directory**. The extension will:
 
 1. Detect every direct file link within the current directory (excludes `Parent Directory` and subfolders).
 2. Send each file to aria2 via JSON-RPC using the same cookies/referrer as your browser session.
 3. Show a toast summarizing how many files were added, skipped as duplicates, or failed.
 
-Prefer keyboard + mouse workflows? Right-click anywhere on the directory listing and choose **Aria2Chrome → Download all files in directory** to trigger the same batch job without scrolling to the floating action button.
+Need a single file instead? Right-click its link and choose **Aria2Chrome → Download this link** to send just that URI (with current cookies/referrer) to aria2.
 
 ### Persistent Rolling Logs
 
