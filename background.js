@@ -1216,6 +1216,9 @@ async function updateDownloadsStatus() {
         
         // Check if download completed
         if (download.status === 'complete' && previousStatus !== 'complete') {
+          if (download.files && download.files.length > 0) {
+            downloads[download.gid].filePath = download.files[0].path;
+          }
           createNotification({
             type: 'basic',
             iconUrl: 'icons/icon48.png',
@@ -1614,7 +1617,26 @@ async function renameDownload(gid, newFilename) {
       return { success: false, error: 'Download not found' };
     }
     
-    download.filename = newFilename.trim();
+    const sanitizedName = newFilename.trim();
+    download.filename = sanitizedName;
+    
+    if (download.status === 'complete' && download.filePath) {
+      try {
+        const oldPath = download.filePath;
+        const pathParts = oldPath.split(/[/\\]/);
+        pathParts.pop();
+        const directory = pathParts.join('/');
+        const newPath = directory ? `${directory}/${sanitizedName}` : sanitizedName;
+        await chrome.runtime.sendNativeMessage('aria2chrome.renamer', {
+          oldPath,
+          newPath
+        });
+        download.filePath = newPath;
+      } catch (error) {
+        console.warn('[Aria2 Downloader] Native rename unavailable or failed:', error);
+      }
+    }
+    
     await saveDownloads();
     
     return { success: true };
