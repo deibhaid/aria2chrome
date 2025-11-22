@@ -1688,6 +1688,78 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse(queuedResult);
         break;
         
+      case 'clearCompletedDownloads':
+        let removed = 0;
+        Object.keys(downloads).forEach(gid => {
+          if (downloads[gid].status === 'complete') {
+            delete downloads[gid];
+            removed++;
+          }
+        });
+        await saveDownloads();
+        sendResponse({ success: true, removed });
+        break;
+        
+      case 'manualAddDownload':
+        if (!request.url) {
+          sendResponse({ success: false, error: 'URL is required' });
+          break;
+        }
+        try {
+          const filename = getFilenameFromUrl(request.url);
+          const manualResult = await addDownload(request.url, filename, {
+            pageUrl: '',
+            pageTitle: 'Manual Add'
+          });
+          sendResponse(manualResult);
+        } catch (error) {
+          sendResponse({ success: false, error: error.message });
+        }
+        break;
+        
+      case 'manualAddDownloads':
+        const urls = Array.isArray(request.urls) ? request.urls.filter(u => !!u) : [];
+        if (urls.length === 0) {
+          sendResponse({ success: false, error: 'No URLs provided' });
+          break;
+        }
+        
+        const manualBatchResults = [];
+        let manualAdded = 0;
+        let manualDupes = 0;
+        let manualFailures = 0;
+        
+        for (const url of urls) {
+          const filename = getFilenameFromUrl(url);
+          try {
+            const result = await addDownload(url, filename, {
+              pageUrl: '',
+              pageTitle: 'Manual Add'
+            });
+            if (result.success) {
+              manualAdded++;
+            } else if (result.duplicate) {
+              manualDupes++;
+            } else {
+              manualFailures++;
+            }
+            manualBatchResults.push({ url, filename, ...result });
+          } catch (error) {
+            manualFailures++;
+            manualBatchResults.push({ url, filename, success: false, error: error.message });
+          }
+        }
+        
+        sendResponse({
+          success: manualAdded > 0 || manualDupes > 0,
+          total: urls.length,
+          added: manualAdded,
+          duplicates: manualDupes,
+          failures: manualFailures,
+          results: manualBatchResults
+        });
+        break;
+        
       case 'updatePreferences':
         if (request.preferences) {
           if (typeof request.preferences.showNotifications === 'boolean') {

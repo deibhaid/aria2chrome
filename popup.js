@@ -307,14 +307,39 @@ function refreshDownloads() {
 }
 
 function clearCompletedDownloads() {
-  const newDownloads = {};
-  Object.entries(downloads).forEach(([gid, download]) => {
-    if (download.status !== 'complete') {
-      newDownloads[gid] = download;
+  chrome.runtime.sendMessage({ action: 'clearCompletedDownloads' }, response => {
+    if (response && response.success) {
+      refreshDownloads();
     }
   });
-  downloads = newDownloads;
-  renderDownloads();
+}
+
+function promptManualDownload() {
+  const input = prompt('Enter one or more direct download URLs (one per line):');
+  if (!input || !input.trim()) {
+    return;
+  }
+  
+  const urls = input
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  
+  if (urls.length === 0) {
+    return;
+  }
+  
+  chrome.runtime.sendMessage({
+    action: 'manualAddDownloads',
+    urls
+  }, response => {
+    if (response && response.success) {
+      alert(`Processed ${response.total} link(s).\nAdded: ${response.added}\nDuplicates: ${response.duplicates}\nFailures: ${response.failures}`);
+      refreshDownloads();
+    } else {
+      alert('Failed to add downloads: ' + (response?.error || 'Unknown error'));
+    }
+  });
 }
 
 // Open settings
@@ -374,4 +399,5 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyBtn').addEventListener('click', openHistory);
   document.getElementById('toggleInterceptionBtn').addEventListener('click', toggleInterception);
   document.getElementById('clearCompletedBtn').addEventListener('click', clearCompletedDownloads);
+  document.getElementById('addUrlBtn').addEventListener('click', promptManualDownload);
 });
