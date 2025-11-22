@@ -25,6 +25,7 @@ const FILE_EXTENSIONS = {
 
 // Default selected extensions (video files by default)
 const DEFAULT_EXTENSIONS = FILE_EXTENSIONS.video;
+const DEFAULT_DOWNLOAD_DIR_HINT = '/home/username/Downloads/';
 
 let selectedExtensions = [];
 let customExtensions = [];
@@ -38,7 +39,9 @@ async function loadSettings() {
     const config = result.aria2Config;
     document.getElementById('rpcUrl').value = config.rpcUrl || 'http://localhost:6800/jsonrpc';
     document.getElementById('secret').value = config.secret || '';
-    document.getElementById('downloadDir').value = config.downloadDir || '';
+    document.getElementById('downloadDir').value = config.downloadDir || DEFAULT_DOWNLOAD_DIR_HINT;
+  } else {
+    document.getElementById('downloadDir').value = DEFAULT_DOWNLOAD_DIR_HINT;
   }
   
   // Load file extensions
@@ -316,7 +319,7 @@ function resetSettings() {
   if (confirm('Are you sure you want to reset all settings to defaults?')) {
     document.getElementById('rpcUrl').value = 'http://localhost:6800/jsonrpc';
     document.getElementById('secret').value = '';
-    document.getElementById('downloadDir').value = '';
+    document.getElementById('downloadDir').value = DEFAULT_DOWNLOAD_DIR_HINT;
     document.getElementById('autoResume').checked = true;
     document.getElementById('showNotifications').checked = true;
     
