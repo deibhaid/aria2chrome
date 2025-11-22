@@ -327,6 +327,7 @@ function closeManualModal() {
 
 function submitManualDownloads() {
   const textarea = document.getElementById('manualUrls');
+  const filenamesTextarea = document.getElementById('manualFilenames');
   const input = textarea.value;
   if (!input || !input.trim()) {
     closeManualModal();
@@ -337,15 +338,23 @@ function submitManualDownloads() {
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean);
+  const names = (filenamesTextarea.value || '')
+    .split(/\r?\n/)
+    .map(line => line.trim());
   
   if (urls.length === 0) {
     closeManualModal();
     return;
   }
   
+  const items = urls.map((url, index) => ({
+    url,
+    filename: names[index] || ''
+  }));
+  
   chrome.runtime.sendMessage({
     action: 'manualAddDownloads',
-    urls
+    items
   }, response => {
     if (response && response.success) {
       alert(`Processed ${response.total} link(s).\nAdded: ${response.added}\nDuplicates: ${response.duplicates}\nFailures: ${response.failures}`);

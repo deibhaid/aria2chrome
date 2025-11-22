@@ -340,6 +340,20 @@ h1 {
   color: #666;
 }
 
+.modal-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.modal-column label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+  display: block;
+  margin-bottom: 6px;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;

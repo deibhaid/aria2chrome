@@ -1717,9 +1717,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
         break;
         
-      case 'manualAddDownloads':
-        const urls = Array.isArray(request.urls) ? request.urls.filter(u => !!u) : [];
-        if (urls.length === 0) {
+      case 'manualAddDownloads': {
+        let entries = [];
+        if (Array.isArray(request.items)) {
+          entries = request.items
+            .filter(item => item && item.url)
+            .map(item => ({
+              url: item.url,
+              filenameOverride: item.filename
+            }));
+        } else if (Array.isArray(request.urls)) {
+          entries = request.urls
+            .filter(url => !!url)
+            .map(url => ({ url }));
+        }
+        
+        if (entries.length === 0) {
           sendResponse({ success: false, error: 'No URLs provided' });
           break;
         }
@@ -1729,8 +1742,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         let manualDupes = 0;
         let manualFailures = 0;
         
-        for (const url of urls) {
-          const filename = getFilenameFromUrl(url);
+        for (const entry of entries) {
+          const url = entry.url;
+          const desiredName = entry.filenameOverride ? entry.filenameOverride.trim() : '';
+          const filename = desiredName || getFilenameFromUrl(url);
           try {
             const result = await addDownload(url, filename, {
               pageUrl: '',
@@ -1752,13 +1767,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
         sendResponse({
           success: manualAdded > 0 || manualDupes > 0,
-          total: urls.length,
+          total: entries.length,
           added: manualAdded,
           duplicates: manualDupes,
           failures: manualFailures,
           results: manualBatchResults
         });
         break;
+      }
         
       case 'updatePreferences':
         if (request.preferences) {
