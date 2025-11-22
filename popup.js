@@ -126,6 +126,7 @@ function renderDownloads() {
               `<button class="control-btn" data-action="startQueued" data-gid="${download.gid || download.queueId}" title="Start Now">▶️</button>` :
               `<button class="control-btn" data-action="resume" data-gid="${download.gid}" title="${download.status === 'failed_permanently' ? 'Retry (Reset Attempts)' : 'Resume'}">▶️</button>`
             }
+            <button class="control-btn" data-action="rename" data-gid="${download.gid}" title="Rename">✏️</button>
             <button class="control-btn" data-action="remove" data-gid="${download.gid || download.queueId}" title="Remove">🗑️</button>
           </div>
         </div>
@@ -184,6 +185,9 @@ function handleControlClick(event) {
       break;
     case 'remove':
       removeDownload(gid);
+      break;
+    case 'rename':
+      renameDownload(gid);
       break;
     case 'showInFolder':
       showInFolder(gid, filepath);
@@ -292,6 +296,28 @@ function showInFolder(gid, filepath) {
   }, response => {
     if (response && !response.success) {
       alert('Could not open file location: ' + (response.error || 'Unknown error'));
+    }
+  });
+}
+
+function renameDownload(gid) {
+  const download = downloads[gid];
+  if (!download) return;
+  const currentName = download.filename || '';
+  const newName = prompt('Enter new filename (without path):', currentName);
+  if (!newName || newName.trim() === currentName) {
+    return;
+  }
+  
+  chrome.runtime.sendMessage({
+    action: 'renameDownload',
+    gid: gid,
+    filename: newName.trim()
+  }, response => {
+    if (response && response.success) {
+      refreshDownloads();
+    } else {
+      alert('Failed to rename download: ' + (response?.error || 'Unknown error'));
     }
   });
 }

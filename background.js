@@ -1604,6 +1604,25 @@ async function updateDownloadUrl(gid, newUrl) {
   }
 }
 
+async function renameDownload(gid, newFilename) {
+  try {
+    if (!newFilename || !newFilename.trim()) {
+      return { success: false, error: 'Filename cannot be empty' };
+    }
+    const download = downloads[gid];
+    if (!download) {
+      return { success: false, error: 'Download not found' };
+    }
+    
+    download.filename = newFilename.trim();
+    await saveDownloads();
+    
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
 // Message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   (async () => {
@@ -1634,6 +1653,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'updateDownloadUrl':
         const updateResult = await updateDownloadUrl(request.gid, request.newUrl);
         sendResponse(updateResult);
+        break;
+      case 'renameDownload':
+        const renameResult = await renameDownload(request.gid, request.filename);
+        sendResponse(renameResult);
         break;
         
       case 'removeDownload':
