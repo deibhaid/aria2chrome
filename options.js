@@ -31,7 +31,7 @@ let customExtensions = [];
 
 // Load saved settings
 async function loadSettings() {
-  const result = await chrome.storage.sync.get(['aria2Config', 'fileExtensions', 'customFileExtensions']);
+  const result = await chrome.storage.sync.get(['aria2Config', 'fileExtensions', 'customFileExtensions', 'autoResume', 'showNotifications']);
   
   // Load aria2 config
   if (result.aria2Config) {
@@ -52,6 +52,10 @@ async function loadSettings() {
   if (result.customFileExtensions && result.customFileExtensions.length > 0) {
     customExtensions = result.customFileExtensions;
   }
+  
+  // Load behavior toggles
+  document.getElementById('autoResume').checked = result.autoResume !== undefined ? result.autoResume : true;
+  document.getElementById('showNotifications').checked = result.showNotifications !== undefined ? result.showNotifications : true;
   
   // Render extension checkboxes
   renderExtensions();
@@ -232,17 +236,26 @@ async function saveSettings() {
     secret: document.getElementById('secret').value.trim(),
     downloadDir: document.getElementById('downloadDir').value.trim()
   };
+  const autoResumeValue = document.getElementById('autoResume').checked;
+  const showNotificationsValue = document.getElementById('showNotifications').checked;
   
   try {
     await chrome.storage.sync.set({ 
       aria2Config: config,
       fileExtensions: selectedExtensions,
-      customFileExtensions: customExtensions
+      customFileExtensions: customExtensions,
+      autoResume: autoResumeValue,
+      showNotifications: showNotificationsValue
     });
     
     // Notify background script to reload config
     chrome.runtime.sendMessage({ action: 'updateConfig', config }, response => {
       showSaveStatus('Settings saved successfully!', 'success');
+    });
+    
+    chrome.runtime.sendMessage({ 
+      action: 'updatePreferences', 
+      preferences: { showNotifications: showNotificationsValue }
     });
   } catch (error) {
     showSaveStatus('Failed to save settings: ' + error.message, 'error');

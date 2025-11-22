@@ -306,6 +306,17 @@ function refreshDownloads() {
   });
 }
 
+function clearCompletedDownloads() {
+  const newDownloads = {};
+  Object.entries(downloads).forEach(([gid, download]) => {
+    if (download.status !== 'complete') {
+      newDownloads[gid] = download;
+    }
+  });
+  downloads = newDownloads;
+  renderDownloads();
+}
+
 // Open settings
 function openSettings() {
   chrome.runtime.openOptionsPage();
@@ -362,4 +373,5 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('settingsBtn').addEventListener('click', openSettings);
   document.getElementById('historyBtn').addEventListener('click', openHistory);
   document.getElementById('toggleInterceptionBtn').addEventListener('click', toggleInterception);
+  document.getElementById('clearCompletedBtn').addEventListener('click', clearCompletedDownloads);
 });

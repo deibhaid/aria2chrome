@@ -24,6 +24,7 @@ let ignoreNextDownloads = new Set(); // Track downloads to ignore (prevent loops
 const directoryIndexTabs = new Map(); // Track tabs that expose HTTP directory listings
 const DIRECTORY_CONTEXT_MENU_ID = 'aria2chrome-download-directory';
 const LINK_CONTEXT_MENU_ID = 'aria2chrome-download-link';
+let showNotifications = true;
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -142,6 +143,11 @@ function logError(message, context) {
   appendLog('error', message, context || {});
 }
 
+function createNotification(options) {
+  if (!showNotifications) return;
+  chrome.notifications.create(options);
+}
+
 function getFilenameFromUrl(url) {
   try {
     const urlObj = new URL(url);
@@ -235,14 +241,14 @@ async function handleLinkContextDownload(info, tab) {
   
   const result = await addDownload(url, filename, metadata);
   if (!result.success && !result.duplicate) {
-    chrome.notifications.create({
+    createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Aria2Chrome',
       message: result.error || 'Failed to add download'
     });
   } else if (result.success && !result.queued) {
-    chrome.notifications.create({
+    createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Aria2Chrome',
@@ -276,7 +282,7 @@ if (chrome.contextMenus) {
           const err = chrome.runtime.lastError;
           if (err) {
             console.warn('[Aria2 Downloader] Failed to notify content script for directory download:', err.message);
-            chrome.notifications.create({
+            createNotification({
               type: 'basic',
               iconUrl: 'icons/icon48.png',
               title: 'Aria2Chrome',
@@ -324,7 +330,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   
   // Show welcome notification on first install
   if (details.reason === 'install') {
-    chrome.notifications.create({
+    createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Aria2Chrome Installed',
@@ -349,17 +355,22 @@ chrome.runtime.onSuspend.addListener(async () => {
 
 // Load configuration from storage
 async function loadConfig() {
-  const result = await chrome.storage.sync.get(['aria2Config', 'interceptionEnabled']);
+  const result = await chrome.storage.sync.get(['aria2Config', 'interceptionEnabled', 'showNotifications']);
   if (result.aria2Config) {
     aria2Config = { ...aria2Config, ...result.aria2Config };
   }
   if (result.interceptionEnabled !== undefined) {
     interceptionEnabled = result.interceptionEnabled;
   }
+  if (result.showNotifications !== undefined) {
+    showNotifications = result.showNotifications;
+  }
+  
   logInfo('Aria2 config loaded', {
     rpcUrl: aria2Config.rpcUrl,
     downloadDir: aria2Config.downloadDir,
-    interceptionEnabled
+    interceptionEnabled,
+    showNotifications
   });
   
   // Update badge based on interception state
@@ -483,7 +494,7 @@ function isDuplicateDownload(url, filename) {
       const resumeResult = await resumeDownload(pausedDuplicate.gid);
       
       if (resumeResult.success) {
-        chrome.notifications.create({
+        createNotification({
           type: 'basic',
           iconUrl: 'icons/icon48.png',
           title: 'Download Auto-Resumed!',
@@ -492,7 +503,7 @@ function isDuplicateDownload(url, filename) {
         });
         console.log('[Aria2 Downloader] ✓ Auto-resume successful for:', filename);
       } else {
-        chrome.notifications.create({
+        createNotification({
           type: 'basic',
           iconUrl: 'icons/icon48.png',
           title: 'Download Link Updated',
@@ -661,7 +672,7 @@ async function startDownload(url, filename, metadata = {}) {
   } catch (error) {
     logError('Failed to add download to aria2', { filename, url, error: error.message });
     // Show user-facing notification for download failures
-    chrome.notifications.create({
+    createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Download Failed',
@@ -783,7 +794,7 @@ async function smartRetry(gid) {
         await saveDownloads();
         
         // Show notification once when hitting max retries
-        chrome.notifications.create({
+        createNotification({
           type: 'basic',
           iconUrl: 'icons/icon48.png',
           title: 'Download Failed',
@@ -854,7 +865,7 @@ async function resumeDownload(gid, manualResume = true) {
     
     // Show notification for failed_permanently retries
     if (wasFailedPermanently) {
-      chrome.notifications.create({
+      createNotification({
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Retry Attempts Reset',
@@ -895,7 +906,7 @@ async function resumeDownload(gid, manualResume = true) {
       
       await saveDownloads();
       
-      chrome.notifications.create({
+      createNotification({
         type: 'basic',
         iconUrl: 'icons/icon48.png',
         title: 'Download Complete',
@@ -985,7 +996,7 @@ async function resumeDownload(gid, manualResume = true) {
         console.log('[Aria2 Downloader] Re-added download with new gid:', newGid, '(old:', oldGid + ')');
         
         // Show success notification
-        chrome.notifications.create({
+        createNotification({
           type: 'basic',
           iconUrl: 'icons/icon48.png',
           title: 'Download Resumed',
@@ -1106,7 +1117,7 @@ async function resumeDownload(gid, manualResume = true) {
         
         console.log('[Aria2 Downloader] Successfully recovered from error state with new gid:', newGid, '(old:', oldGid + ')');
         
-        chrome.notifications.create({
+        createNotification({
           type: 'basic',
           iconUrl: 'icons/icon48.png',
           title: 'Download Recovered',
@@ -1205,7 +1216,7 @@ async function updateDownloadsStatus() {
         
         // Check if download completed
         if (download.status === 'complete' && previousStatus !== 'complete') {
-          chrome.notifications.create({
+          createNotification({
             type: 'basic',
             iconUrl: 'icons/icon48.png',
             title: 'Download Complete',
@@ -1250,7 +1261,7 @@ async function updateDownloadsStatus() {
             await saveDownloads();
             
             // Show notification
-            chrome.notifications.create({
+            createNotification({
               type: 'basic',
               iconUrl: 'icons/icon48.png',
               title: 'Download Complete',
@@ -1540,7 +1551,7 @@ async function showFileInFolder(filepath) {
     }
     
     // Final fallback: Show notification with file path
-    chrome.notifications.create({
+    createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'File Location',
@@ -1580,7 +1591,7 @@ async function updateDownloadUrl(gid, newUrl) {
     
     await saveDownloads();
     
-    chrome.notifications.create({
+    createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Download URL Updated',
@@ -1675,6 +1686,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'startQueuedDownload':
         const queuedResult = await startQueuedDownloadManually(request.queueId);
         sendResponse(queuedResult);
+        break;
+        
+      case 'updatePreferences':
+        if (request.preferences) {
+          if (typeof request.preferences.showNotifications === 'boolean') {
+            showNotifications = request.preferences.showNotifications;
+            await chrome.storage.sync.set({ showNotifications });
+          }
+        }
+        sendResponse({ success: true });
         break;
         
       case 'directoryListingStatus':
@@ -1861,7 +1882,7 @@ async function restoreFromBackup() {
         });
         
         // Show notification
-        chrome.notifications.create({
+        createNotification({
           type: 'basic',
           iconUrl: 'icons/icon48.png',
           title: 'Settings Restored',
