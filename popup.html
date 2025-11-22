@@ -50,6 +50,18 @@
       </div>
     </footer>
   </div>
+
+  <div id="manualModal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Paste Direct Download URLs</h3>
+      <p class="modal-hint">Enter one URL per line. Use Enter/Return to add new lines.</p>
+      <textarea id="manualUrls" rows="8" placeholder="1. https://example.com/file1.mp4&#10;2. https://example.com/file2.mp4"></textarea>
+      <div class="modal-actions">
+        <button id="cancelManualBtn" class="btn-secondary">Cancel</button>
+        <button id="submitManualBtn" class="btn-primary">Add Downloads</button>
+      </div>
+    </div>
+  </div>
   
   <script src="browser-polyfill.js"></script>
   <script src="popup.js"></script>

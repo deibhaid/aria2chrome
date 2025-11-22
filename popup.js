@@ -314,18 +314,32 @@ function clearCompletedDownloads() {
   });
 }
 
-function promptManualDownload() {
-  const input = prompt('Enter one or more direct download URLs (one per line):');
+function openManualModal() {
+  document.getElementById('manualModal').classList.remove('hidden');
+  const textarea = document.getElementById('manualUrls');
+  textarea.value = '';
+  textarea.focus();
+}
+
+function closeManualModal() {
+  document.getElementById('manualModal').classList.add('hidden');
+}
+
+function submitManualDownloads() {
+  const textarea = document.getElementById('manualUrls');
+  const input = textarea.value;
   if (!input || !input.trim()) {
+    closeManualModal();
     return;
   }
   
   const urls = input
-    .split(/\s+/)
+    .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean);
   
   if (urls.length === 0) {
+    closeManualModal();
     return;
   }
   
@@ -339,6 +353,7 @@ function promptManualDownload() {
     } else {
       alert('Failed to add downloads: ' + (response?.error || 'Unknown error'));
     }
+    closeManualModal();
   });
 }
 
@@ -399,5 +414,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyBtn').addEventListener('click', openHistory);
   document.getElementById('toggleInterceptionBtn').addEventListener('click', toggleInterception);
   document.getElementById('clearCompletedBtn').addEventListener('click', clearCompletedDownloads);
-  document.getElementById('addUrlBtn').addEventListener('click', promptManualDownload);
+  document.getElementById('addUrlBtn').addEventListener('click', openManualModal);
+  document.getElementById('cancelManualBtn').addEventListener('click', closeManualModal);
+  document.getElementById('submitManualBtn').addEventListener('click', submitManualDownloads);
+  document.getElementById('manualModal').addEventListener('click', (e) => {
+    if (e.target.id === 'manualModal') {
+      closeManualModal();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeManualModal();
+    }
+  });
 });
