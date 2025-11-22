@@ -321,7 +321,7 @@ function promptManualDownload() {
   }
   
   const urls = input
-    .split(/\r?\n/)
+    .split(/\s+/)
     .map(line => line.trim())
     .filter(Boolean);
   
