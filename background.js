@@ -1797,10 +1797,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   (async () => {
     switch (request.action) {
       case 'captureVideo':
+        const skipConfirm = request.skipConfirmation === true;
         const result = await addDownload(request.url, request.filename, {
           pageUrl: request.pageUrl,
           pageTitle: request.pageTitle
-        });
+        }, skipConfirm);
         sendResponse(result);
         break;
         

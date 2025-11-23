@@ -223,26 +223,81 @@ document.addEventListener('click', function(event) {
         downloadAttr: downloadAttr
       });
       
-      // Send message to background script
-      chrome.runtime.sendMessage({
-        action: 'captureVideo',
-        url: href,
-        filename: filename,
-        pageUrl: window.location.href,
-        pageTitle: document.title
-      }, function(response) {
-        if (response && response.success) {
-          // Show notification
-          if (!response.duplicate) {
-            showNotification('Download added', `${filename} added to aria2 queue`);
+      // Try to open file picker directly (we have user gesture from the click)
+      if (window.showSaveFilePicker) {
+        (async () => {
+          try {
+            const fileHandle = await window.showSaveFilePicker({
+              suggestedName: filename,
+              types: [{
+                description: 'All Files',
+                accept: {'*/*': []}
+              }],
+              excludeAcceptAllOption: false
+            });
+            
+            const file = await fileHandle.getFile();
+            const selectedFilename = file.name;
+            
+            // Send to background with skipConfirmation = true
+            chrome.runtime.sendMessage({
+              action: 'captureVideo',
+              url: href,
+              filename: selectedFilename,
+              pageUrl: window.location.href,
+              pageTitle: document.title,
+              skipConfirmation: true
+            }, function(response) {
+              if (response && response.success) {
+                if (!response.duplicate && !response.awaiting_confirmation) {
+                  showNotification('Download started', `${selectedFilename} added to aria2`);
+                }
+              } else if (response && response.duplicate) {
+                console.log('[Aria2 Downloader] Duplicate download skipped');
+              } else {
+                showNotification('Error', response?.error || 'Failed to add to aria2 queue');
+              }
+            });
+            
+          } catch (error) {
+            if (error.name === 'AbortError') {
+              // User cancelled file picker
+              console.log('[Aria2 Downloader] File picker cancelled by user');
+              showNotification('Cancelled', 'Download cancelled');
+              return;
+            }
+            console.error('[Aria2 Downloader] File picker error:', error);
+            showNotification('Error', 'Failed to open file picker: ' + error.message);
           }
-        } else if (response && response.duplicate) {
-          // Don't show error for duplicates, just skip silently
-          console.log('[Aria2 Downloader] Duplicate download skipped');
-        } else {
-          showNotification('Error', response?.error || 'Failed to add to aria2 queue');
+        })();
+      } else {
+        // Fallback: no file picker available, use prompt
+        const confirmedName = prompt('Enter filename:', filename);
+        if (!confirmedName || !confirmedName.trim()) {
+          showNotification('Cancelled', 'Download cancelled');
+          return;
         }
-      });
+        
+        // Send message to background script
+        chrome.runtime.sendMessage({
+          action: 'captureVideo',
+          url: href,
+          filename: confirmedName.trim(),
+          pageUrl: window.location.href,
+          pageTitle: document.title,
+          skipConfirmation: true
+        }, function(response) {
+          if (response && response.success) {
+            if (!response.duplicate && !response.awaiting_confirmation) {
+              showNotification('Download added', `${confirmedName.trim()} added to aria2 queue`);
+            }
+          } else if (response && response.duplicate) {
+            console.log('[Aria2 Downloader] Duplicate download skipped');
+          } else {
+            showNotification('Error', response?.error || 'Failed to add to aria2 queue');
+          }
+        });
+      }
     }
   }
   
