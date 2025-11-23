@@ -232,11 +232,14 @@ document.addEventListener('click', function(event) {
         // Check if filename contains URL encoding
         if (filename.includes('%')) {
           decodedFilename = decodeURIComponent(filename);
+          console.log('[Aria2 Downloader] Decoded filename from', filename, 'to', decodedFilename);
         }
       } catch (e) {
         console.warn('[Aria2 Downloader] Failed to decode filename:', e);
         decodedFilename = filename;
       }
+      
+      console.log('[Aria2 Downloader] Final filename to use:', decodedFilename);
       
       console.log('[Aria2 Downloader] Intercepted video download:', {
         url: href,
