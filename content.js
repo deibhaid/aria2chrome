@@ -219,9 +219,22 @@ document.addEventListener('click', function(event) {
       
       const filename = getFilenameFromUrl(href, downloadAttr, linkText);
       
+      // Ensure filename is decoded (double-decode protection)
+      let decodedFilename = filename;
+      try {
+        // Check if filename contains URL encoding
+        if (filename.includes('%')) {
+          decodedFilename = decodeURIComponent(filename);
+        }
+      } catch (e) {
+        console.warn('[Aria2 Downloader] Failed to decode filename:', e);
+        decodedFilename = filename;
+      }
+      
       console.log('[Aria2 Downloader] Intercepted video download:', {
         url: href,
-        filename: filename,
+        filename: decodedFilename,
+        originalFilename: filename,
         downloadAttr: downloadAttr
       });
       
@@ -230,7 +243,7 @@ document.addEventListener('click', function(event) {
         (async () => {
           try {
             const fileHandle = await window.showSaveFilePicker({
-              suggestedName: filename,
+              suggestedName: decodedFilename,
               types: [{
                 description: 'All Files',
                 accept: {'*/*': []}
@@ -274,7 +287,7 @@ document.addEventListener('click', function(event) {
         })();
       } else {
         // Fallback: no file picker available, use prompt
-        const confirmedName = prompt('Enter filename:', filename);
+        const confirmedName = prompt('Enter filename:', decodedFilename);
         if (!confirmedName || !confirmedName.trim()) {
           showNotification('Cancelled', 'Download cancelled');
           return;
