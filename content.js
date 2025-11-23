@@ -181,12 +181,14 @@ document.addEventListener('click', function(event) {
   
   let target = event.target;
   
-  // Traverse up to find anchor tag or button
-  while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON') {
+  // Traverse up to find anchor tag or button (go up more levels to handle nested elements)
+  let depth = 0;
+  while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON' && depth < 10) {
     target = target.parentElement;
+    depth++;
   }
   
-  console.log('[Aria2 Downloader] After traversal, target:', target ? target.tagName : 'null');
+  console.log('[Aria2 Downloader] After traversal, target:', target ? target.tagName : 'null', 'depth:', depth);
   
   // Handle link clicks
   if (target && target.tagName === 'A') {
@@ -198,7 +200,7 @@ document.addEventListener('click', function(event) {
     console.log('[Aria2 Downloader] Link clicked:', {
       href: href,
       downloadAttr: downloadAttr,
-      linkText: linkText,
+      linkText: linkText.substring(0, 50), // Truncate for readability
       isVideo: isVideoUrl(href, downloadAttr, linkText, target)
     });
     
