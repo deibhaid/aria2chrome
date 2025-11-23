@@ -384,8 +384,9 @@ async function confirmDownload(confirmationId) {
       suggestedName: suggestedName,
       types: [{
         description: 'All Files',
-        accept: {'*/*': ['*']}
-      }]
+        accept: {'*/*': []}
+      }],
+      excludeAcceptAllOption: false
     });
     
     // Get the selected path and filename
@@ -518,8 +519,9 @@ async function processManualDownloadsWithPicker(urls, names, index) {
       suggestedName: suggestedName,
       types: [{
         description: 'All Files',
-        accept: {'*/*': ['*']}
-      }]
+        accept: {'*/*': []}
+      }],
+      excludeAcceptAllOption: false
     });
     
     const file = await fileHandle.getFile();
