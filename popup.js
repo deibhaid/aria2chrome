@@ -354,7 +354,7 @@ function renameDownload(gid) {
   });
 }
 
-function confirmDownload(confirmationId) {
+async function confirmDownload(confirmationId) {
   const download = downloads[confirmationId];
   if (!download || download.status !== 'awaiting_confirmation') {
     alert('Confirmation request expired or invalid');
@@ -362,24 +362,56 @@ function confirmDownload(confirmationId) {
     return;
   }
   
-  const currentName = download.filename || '';
-  const confirmedName = prompt('Confirm filename (or edit):', currentName);
-  
-  if (!confirmedName || !confirmedName.trim()) {
-    // User cancelled - remove the confirmation request
-    chrome.runtime.sendMessage({
-      action: 'cancelConfirmation',
-      confirmationId: confirmationId
-    }, () => {
-      refreshDownloads();
+  try {
+    // Check if File System Access API is available
+    if (!window.showSaveFilePicker) {
+      // Fallback to simple prompt
+      const currentName = download.filename || '';
+      const confirmedName = prompt('Confirm filename (or edit):', currentName);
+      
+      if (!confirmedName || !confirmedName.trim()) {
+        cancelConfirmation(confirmationId);
+        return;
+      }
+      
+      startDownloadWithFilename(confirmationId, confirmedName.trim(), null);
+      return;
+    }
+    
+    // Open native file picker
+    const suggestedName = download.filename || 'download';
+    const fileHandle = await window.showSaveFilePicker({
+      suggestedName: suggestedName,
+      types: [{
+        description: 'All Files',
+        accept: {'*/*': ['*']}
+      }]
     });
-    return;
+    
+    // Get the selected path and filename
+    const file = await fileHandle.getFile();
+    const selectedFilename = file.name;
+    
+    // Get directory path (we'll pass to background to extract directory)
+    startDownloadWithFilename(confirmationId, selectedFilename, fileHandle);
+    
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      // User cancelled the file picker
+      console.log('File picker cancelled by user');
+      return;
+    }
+    console.error('File picker error:', error);
+    alert('Failed to open file picker: ' + error.message);
   }
-  
+}
+
+function startDownloadWithFilename(confirmationId, filename, fileHandle) {
   chrome.runtime.sendMessage({
     action: 'confirmDownload',
     confirmationId: confirmationId,
-    filename: confirmedName.trim()
+    filename: filename,
+    hasFileHandle: !!fileHandle
   }, response => {
     if (response && response.success) {
       refreshDownloads();
@@ -387,6 +419,15 @@ function confirmDownload(confirmationId) {
       alert('Failed to start download: ' + (response?.error || 'Unknown error'));
       refreshDownloads();
     }
+  });
+}
+
+function cancelConfirmation(confirmationId) {
+  chrome.runtime.sendMessage({
+    action: 'cancelConfirmation',
+    confirmationId: confirmationId
+  }, () => {
+    refreshDownloads();
   });
 }
 
@@ -441,23 +482,89 @@ function submitManualDownloads() {
     return;
   }
   
-  const items = urls.map((url, index) => ({
-    url,
-    filename: names[index] || ''
-  }));
+  closeManualModal();
   
-  chrome.runtime.sendMessage({
-    action: 'manualAddDownloads',
-    items
-  }, response => {
-    if (response && response.success) {
-      alert(`Processed ${response.total} link(s).\nAdded: ${response.added}\nDuplicates: ${response.duplicates}\nFailures: ${response.failures}`);
-      refreshDownloads();
-    } else {
-      alert('Failed to add downloads: ' + (response?.error || 'Unknown error'));
+  // Process each URL with file picker
+  processManualDownloadsWithPicker(urls, names, 0);
+}
+
+async function processManualDownloadsWithPicker(urls, names, index) {
+  if (index >= urls.length) {
+    refreshDownloads();
+    return;
+  }
+  
+  const url = urls[index];
+  const suggestedName = names[index] || getFilenameFromUrl(url);
+  
+  try {
+    // Check if File System Access API is available
+    if (!window.showSaveFilePicker) {
+      // Fallback: add with suggested name
+      chrome.runtime.sendMessage({
+        action: 'manualAddDownload',
+        url: url,
+        filename: suggestedName,
+        skipConfirmation: false
+      }, () => {
+        // Process next URL
+        processManualDownloadsWithPicker(urls, names, index + 1);
+      });
+      return;
     }
-    closeManualModal();
-  });
+    
+    // Open native file picker
+    const fileHandle = await window.showSaveFilePicker({
+      suggestedName: suggestedName,
+      types: [{
+        description: 'All Files',
+        accept: {'*/*': ['*']}
+      }]
+    });
+    
+    const file = await fileHandle.getFile();
+    const selectedFilename = file.name;
+    
+    // Add download with confirmed filename
+    chrome.runtime.sendMessage({
+      action: 'manualAddDownload',
+      url: url,
+      filename: selectedFilename,
+      skipConfirmation: true
+    }, response => {
+      if (response && !response.success && !response.duplicate) {
+        console.error('Failed to add download:', response.error);
+      }
+      // Process next URL
+      processManualDownloadsWithPicker(urls, names, index + 1);
+    });
+    
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      // User cancelled - skip this download
+      console.log('File picker cancelled, skipping:', url);
+      processManualDownloadsWithPicker(urls, names, index + 1);
+    } else {
+      console.error('File picker error:', error);
+      alert('Failed to open file picker for: ' + url + '\nError: ' + error.message);
+      // Continue with next URL
+      processManualDownloadsWithPicker(urls, names, index + 1);
+    }
+  }
+}
+
+function getFilenameFromUrl(url) {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const filename = pathname.split('/').filter(Boolean).pop();
+    if (filename) {
+      return decodeURIComponent(filename);
+    }
+  } catch (e) {
+    // ignore
+  }
+  return 'download_' + Date.now();
 }
 
 // Open settings

@@ -236,23 +236,25 @@ async function handleLinkContextDownload(info, tab) {
   const filename = getFilenameFromUrl(url);
   const metadata = {
     pageUrl: info.pageUrl || tab?.url || '',
-    pageTitle: tab?.title || ''
+    pageTitle: tab?.title || '',
+    isContextMenu: true
   };
   
-  const result = await addDownload(url, filename, metadata);
-  if (!result.success && !result.duplicate) {
+  // Context menu downloads should await confirmation (will trigger file picker in popup/content script)
+  const result = await addDownload(url, filename, metadata, false);
+  if (!result.success && !result.duplicate && !result.awaiting_confirmation) {
     createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Aria2Chrome',
       message: result.error || 'Failed to add download'
     });
-  } else if (result.success && !result.queued) {
+  } else if (result.awaiting_confirmation) {
     createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Aria2Chrome',
-      message: `${filename} added to aria2`
+      message: `${filename} ready - open popup to confirm and start`
     });
   }
 }
@@ -1945,11 +1947,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           break;
         }
         try {
-          const filename = getFilenameFromUrl(request.url);
-          const manualResult = await addDownload(request.url, filename, {
+          const manualFilename = request.filename || getFilenameFromUrl(request.url);
+          const skipConfirm = request.skipConfirmation === true;
+          const manualResult = await addDownload(request.url, manualFilename, {
             pageUrl: '',
             pageTitle: 'Manual Add'
-          });
+          }, skipConfirm);
           sendResponse(manualResult);
         } catch (error) {
           sendResponse({ success: false, error: error.message });
