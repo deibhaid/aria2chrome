@@ -128,9 +128,30 @@ h1 {
   font-weight: 500;
   font-size: 14px;
   color: #333;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
   flex: 1;
   margin-right: 10px;
+  scrollbar-width: thin;
+}
+
+.download-filename::-webkit-scrollbar {
+  height: 4px;
+}
+
+.download-filename::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 2px;
+}
+
+.download-filename::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 2px;
+}
+
+.download-filename::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
 }
 
 .download-url {
