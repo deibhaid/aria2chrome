@@ -463,7 +463,6 @@ function closeManualModal() {
 
 function submitManualDownloads() {
   const textarea = document.getElementById('manualUrls');
-  const filenamesTextarea = document.getElementById('manualFilenames');
   const input = textarea.value;
   if (!input || !input.trim()) {
     closeManualModal();
@@ -474,9 +473,6 @@ function submitManualDownloads() {
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean);
-  const names = (filenamesTextarea.value || '')
-    .split(/\r?\n/)
-    .map(line => line.trim());
   
   if (urls.length === 0) {
     closeManualModal();
@@ -485,8 +481,8 @@ function submitManualDownloads() {
   
   closeManualModal();
   
-  // Process each URL with file picker
-  processManualDownloadsWithPicker(urls, names, 0);
+  // Process each URL with file picker (no pre-specified filenames)
+  processManualDownloadsWithPicker(urls, [], 0);
 }
 
 async function processManualDownloadsWithPicker(urls, names, index) {

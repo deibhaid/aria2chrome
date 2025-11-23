@@ -53,16 +53,12 @@
 
   <div id="manualModal" class="modal hidden">
     <div class="modal-content">
-      <h3>Paste Direct Download URLs</h3>
-      <p class="modal-hint">Enter one URL per line. Optionally provide matching save-as filenames.</p>
+      <h3>Add Download URLs</h3>
+      <p class="modal-hint">Enter one URL per line. You'll choose the filename for each using your file browser.</p>
       <div class="modal-inputs">
-        <div class="modal-column">
+        <div class="modal-column-full">
           <label for="manualUrls">Download URLs</label>
-          <textarea id="manualUrls" rows="8" placeholder="Line 1: https://example.com/file1.mp4&#10;Line 2: https://example.com/file2.mp4"></textarea>
-        </div>
-        <div class="modal-column">
-          <label for="manualFilenames">Save-As Filenames (optional)</label>
-          <textarea id="manualFilenames" rows="8" placeholder="Line 1: custom-file-1.mp4&#10;Line 2: custom-file-2.mp4"></textarea>
+          <textarea id="manualUrls" rows="10" placeholder="https://example.com/file1.mp4&#10;https://example.com/file2.mp4&#10;https://example.com/file3.mkv"></textarea>
         </div>
       </div>
       <div class="modal-actions">
