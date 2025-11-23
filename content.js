@@ -127,7 +127,7 @@ function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
 function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
   // First, try the download attribute (most reliable for download links)
   if (downloadAttr && downloadAttr.trim()) {
-    return downloadAttr.trim();
+    return decodeURIComponent(downloadAttr.trim());
   }
   
   // Try to extract filename from link text if it contains extension
@@ -136,7 +136,7 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
     const regex = new RegExp(`([^\\\\/]+\\.(${extensionPattern.replace(/\\\./g, '')}))`, 'i');
     const match = linkText.match(regex);
     if (match) {
-      return match[1].trim();
+      return decodeURIComponent(match[1].trim());
     }
   }
   
@@ -146,9 +146,9 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
     const pathname = urlObj.pathname;
     const filename = pathname.split('/').pop();
     
-    // If we got a meaningful filename from URL, use it
+    // If we got a meaningful filename from URL, use it (decode URL encoding)
     if (filename && FILE_EXTENSIONS.some(ext => filename.toLowerCase().endsWith(ext.toLowerCase()))) {
-      return filename;
+      return decodeURIComponent(filename);
     }
   } catch (e) {
     // Continue to fallback
@@ -162,7 +162,7 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
     const regex = new RegExp(`([^\\\\/]+\\.(${extensionPattern.replace(/\\\./g, '')}))`, 'i');
     const match = pageTitle.match(regex);
     if (match) {
-      return match[1].trim();
+      return decodeURIComponent(match[1].trim());
     }
   } catch (e) {
     // Continue to fallback
