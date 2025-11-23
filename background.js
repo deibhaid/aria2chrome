@@ -522,7 +522,7 @@ function isDuplicateDownload(url, filename) {
 }
 
 // Add download to aria2 or queue
-async function addDownload(url, filename, metadata = {}) {
+async function addDownload(url, filename, metadata = {}, skipConfirmation = false) {
   // Don't add if interception is disabled
   if (!interceptionEnabled) {
     logInfo('Interception disabled, skipping download', { url, filename });
@@ -553,7 +553,8 @@ async function addDownload(url, filename, metadata = {}) {
       filename,
       status: 'queued',
       ...metadata,
-      addedAt: Date.now()
+      addedAt: Date.now(),
+      skipConfirmation
     };
     
     downloadQueue.push(queuedDownload);
@@ -568,8 +569,8 @@ async function addDownload(url, filename, metadata = {}) {
     return { success: true, queued: true, queueId };
   }
   
-  // Start download immediately
-  return await startDownload(url, filename, metadata);
+  // Start download immediately (with confirmation if needed)
+  return await startDownload(url, filename, metadata, skipConfirmation);
 }
 
 // Expand ~ in path (aria2c might not handle it properly in some cases)
@@ -585,11 +586,29 @@ function expandPath(path) {
 }
 
 // Actually start a download in aria2c
-async function startDownload(url, filename, metadata = {}) {
+async function startDownload(url, filename, metadata = {}, skipConfirmation = false) {
   try {
     // Reload config to get latest download directory
     await loadConfig();
     const configuredDir = (aria2Config.downloadDir || '').trim();
+    
+    // Prompt for filename confirmation if not skipped
+    if (!skipConfirmation) {
+      // Store download info for confirmation
+      const confirmationId = 'confirm_' + Date.now() + '_' + Math.random().toString(36).substring(7);
+      downloads[confirmationId] = {
+        confirmationId,
+        url,
+        filename,
+        status: 'awaiting_confirmation',
+        ...metadata,
+        addedAt: Date.now()
+      };
+      await saveDownloads();
+      
+      logInfo('Download awaiting filename confirmation', { filename, url });
+      return { success: true, awaiting_confirmation: true, confirmationId };
+    }
     
     // Only use aria2c for downloading - no duplicate Chrome download
     const options = {
@@ -699,14 +718,15 @@ async function processQueue() {
     // Remove from downloads (will be re-added when started)
     delete downloads[queuedDownload.queueId];
     
-    // Start the download
+    // Start the download (preserve skipConfirmation flag)
     const result = await startDownload(
       queuedDownload.url, 
       queuedDownload.filename, 
       {
         pageUrl: queuedDownload.pageUrl,
         pageTitle: queuedDownload.pageTitle
-      }
+      },
+      queuedDownload.skipConfirmation || false
     );
     
     await saveDownloads();
@@ -739,14 +759,15 @@ async function startQueuedDownloadManually(queueId) {
       queueId
     });
     
-    // Start the download
+    // Start the download (preserve skipConfirmation flag)
     const result = await startDownload(
       queuedDownload.url,
       queuedDownload.filename,
       {
         pageUrl: queuedDownload.pageUrl,
         pageTitle: queuedDownload.pageTitle
-      }
+      },
+      queuedDownload.skipConfirmation || false
     );
     
     await saveDownloads();
@@ -1801,8 +1822,57 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse(updateResult);
         break;
       case 'renameDownload':
-        const renameResult = await renameDownload(request.gid, request.filename);
-        sendResponse(renameResult);
+        // Renaming only allowed for complete downloads or awaiting_confirmation
+        const downloadToRename = downloads[request.gid];
+        if (!downloadToRename) {
+          sendResponse({ success: false, error: 'Download not found' });
+        } else if (downloadToRename.status === 'complete') {
+          // Allow renaming completed downloads (native messaging host can handle on-disk rename)
+          const renameResult = await renameDownload(request.gid, request.filename);
+          sendResponse(renameResult);
+        } else if (downloadToRename.status === 'awaiting_confirmation') {
+          // Allow confirming filename before download starts
+          downloadToRename.filename = request.filename.trim();
+          await saveDownloads();
+          sendResponse({ success: true, confirmation: true });
+        } else {
+          sendResponse({ success: false, error: 'Cannot rename downloads in progress. Delete and re-add instead.' });
+        }
+        break;
+        
+      case 'confirmDownload':
+        // Confirm filename and start download
+        const confirmationDownload = downloads[request.confirmationId];
+        if (!confirmationDownload || confirmationDownload.status !== 'awaiting_confirmation') {
+          sendResponse({ success: false, error: 'Confirmation request not found or expired' });
+          break;
+        }
+        
+        const confirmedFilename = request.filename ? request.filename.trim() : confirmationDownload.filename;
+        const url = confirmationDownload.url;
+        const metadata = {
+          pageUrl: confirmationDownload.pageUrl || '',
+          pageTitle: confirmationDownload.pageTitle || ''
+        };
+        
+        // Remove the confirmation entry
+        delete downloads[request.confirmationId];
+        await saveDownloads();
+        
+        // Start the actual download with skipConfirmation = true
+        const confirmResult = await startDownload(url, confirmedFilename, metadata, true);
+        sendResponse(confirmResult);
+        break;
+        
+      case 'cancelConfirmation':
+        // Cancel filename confirmation
+        if (request.confirmationId && downloads[request.confirmationId]) {
+          delete downloads[request.confirmationId];
+          await saveDownloads();
+          sendResponse({ success: true, cancelled: true });
+        } else {
+          sendResponse({ success: false, error: 'Confirmation request not found' });
+        }
         break;
         
       case 'removeDownload':

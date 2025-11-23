@@ -25,6 +25,7 @@ function getStatusClass(status) {
     case 'error': return 'status-error';
     case 'waiting': return 'status-waiting';
     case 'queued': return 'status-queued';
+    case 'awaiting_confirmation': return 'status-waiting';
     default: return 'status-active';
   }
 }
@@ -40,6 +41,7 @@ function getStatusText(status) {
     case 'queued': return 'Queued';
     case 'failed_permanently': return 'Failed (Max Retries)';
     case 'removed': return 'Removed';
+    case 'awaiting_confirmation': return 'Confirm Filename';
     default: return status;
   }
 }
@@ -80,6 +82,7 @@ function renderDownloads() {
   }
   
   const statusPriority = {
+    awaiting_confirmation: -1,
     active: 0,
     waiting: 1,
     queued: 2,
@@ -118,7 +121,9 @@ function renderDownloads() {
             ${download.filename}
           </div>
           <div class="download-controls">
-            ${download.status === 'active' || download.status === 'waiting' ? 
+            ${download.status === 'awaiting_confirmation' ? 
+              `<button class="control-btn" data-action="confirmDownload" data-gid="${download.confirmationId || download.gid}" title="Confirm & Start">✓</button>` :
+              download.status === 'active' || download.status === 'waiting' ? 
               `<button class="control-btn" data-action="pause" data-gid="${download.gid}" title="Pause">⏸️</button>` : 
               download.status === 'complete' ?
               `<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" data-filepath="${download.filePath || ''}" title="Show in Folder">📁</button>` :
@@ -126,8 +131,11 @@ function renderDownloads() {
               `<button class="control-btn" data-action="startQueued" data-gid="${download.gid || download.queueId}" title="Start Now">▶️</button>` :
               `<button class="control-btn" data-action="resume" data-gid="${download.gid}" title="${download.status === 'failed_permanently' ? 'Retry (Reset Attempts)' : 'Resume'}">▶️</button>`
             }
-            <button class="control-btn" data-action="rename" data-gid="${download.gid}" title="Rename">✏️</button>
-            <button class="control-btn" data-action="remove" data-gid="${download.gid || download.queueId}" title="Remove">🗑️</button>
+            ${download.status === 'awaiting_confirmation' || download.status === 'complete' ? 
+              `<button class="control-btn" data-action="rename" data-gid="${download.gid || download.confirmationId}" title="Rename">✏️</button>` : 
+              ''
+            }
+            <button class="control-btn" data-action="remove" data-gid="${download.gid || download.queueId || download.confirmationId}" title="Remove">🗑️</button>
           </div>
         </div>
         
@@ -188,6 +196,9 @@ function handleControlClick(event) {
       break;
     case 'rename':
       renameDownload(gid);
+      break;
+    case 'confirmDownload':
+      confirmDownload(gid);
       break;
     case 'showInFolder':
       showInFolder(gid, filepath);
@@ -262,6 +273,19 @@ function startQueuedDownload(queueId) {
 
 // Remove download
 function removeDownload(gid) {
+  const download = downloads[gid];
+  
+  // If awaiting_confirmation, send cancellation instead
+  if (download && download.status === 'awaiting_confirmation') {
+    chrome.runtime.sendMessage({
+      action: 'cancelConfirmation',
+      confirmationId: gid
+    }, response => {
+      refreshDownloads();
+    });
+    return;
+  }
+  
   chrome.runtime.sendMessage({
     action: 'removeDownload',
     gid: gid
@@ -315,18 +339,53 @@ function renameDownload(gid) {
     filename: newName.trim()
   }, response => {
     if (response && response.success) {
-      if (response.requiresRestart) {
-        let message = 'Filename updated. The download has been paused so it can restart under the new name when you click Resume.';
-        if (response.hadProgress) {
-          message += '\n\naria2 cannot rename files that already have partial data. If you want to keep the existing progress, rename the partial file and its .aria2 sidecar on disk to match the new name before resuming.';
-        }
-        alert(message);
-      }
-      if (!response.unchanged) {
+      if (response.confirmation) {
+        // Just renamed during confirmation stage
+        refreshDownloads();
+      } else if (response.requiresRestart) {
+        alert('Cannot rename downloads in progress. The download was not modified.');
+      } else {
+        // Renamed completed download (requires native helper)
         refreshDownloads();
       }
     } else {
-      alert('Failed to rename download: ' + (response?.error || 'Unknown error'));
+      alert('Failed to rename: ' + (response?.error || 'Unknown error'));
+    }
+  });
+}
+
+function confirmDownload(confirmationId) {
+  const download = downloads[confirmationId];
+  if (!download || download.status !== 'awaiting_confirmation') {
+    alert('Confirmation request expired or invalid');
+    refreshDownloads();
+    return;
+  }
+  
+  const currentName = download.filename || '';
+  const confirmedName = prompt('Confirm filename (or edit):', currentName);
+  
+  if (!confirmedName || !confirmedName.trim()) {
+    // User cancelled - remove the confirmation request
+    chrome.runtime.sendMessage({
+      action: 'cancelConfirmation',
+      confirmationId: confirmationId
+    }, () => {
+      refreshDownloads();
+    });
+    return;
+  }
+  
+  chrome.runtime.sendMessage({
+    action: 'confirmDownload',
+    confirmationId: confirmationId,
+    filename: confirmedName.trim()
+  }, response => {
+    if (response && response.success) {
+      refreshDownloads();
+    } else {
+      alert('Failed to start download: ' + (response?.error || 'Unknown error'));
+      refreshDownloads();
     }
   });
 }
