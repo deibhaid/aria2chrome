@@ -136,18 +136,24 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
     const pathname = urlObj.pathname;
     const filename = pathname.split('/').pop();
     
+    console.log('[Aria2 Downloader] getFilenameFromUrl: extracted from URL:', filename);
+    
     // If we got a meaningful filename from URL, decode and use it
     if (filename && FILE_EXTENSIONS.some(ext => filename.toLowerCase().endsWith(ext.toLowerCase()))) {
       // Decode URL encoding
       try {
-        return decodeURIComponent(filename);
+        const decoded = decodeURIComponent(filename);
+        console.log('[Aria2 Downloader] getFilenameFromUrl: decoded', filename, '->', decoded);
+        return decoded;
       } catch (e) {
         // If decode fails, return as-is
+        console.warn('[Aria2 Downloader] getFilenameFromUrl: decode failed:', e);
         return filename;
       }
     }
   } catch (e) {
     // Continue to fallback
+    console.warn('[Aria2 Downloader] getFilenameFromUrl: URL parse failed:', e);
   }
   
   // Try to extract filename from link text if it contains extension
