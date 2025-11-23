@@ -130,28 +130,35 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
     return decodeURIComponent(downloadAttr.trim());
   }
   
+  // Try to extract from URL path FIRST (most accurate for direct file links)
+  try {
+    const urlObj = new URL(url, window.location.href);
+    const pathname = urlObj.pathname;
+    const filename = pathname.split('/').pop();
+    
+    // If we got a meaningful filename from URL, decode and use it
+    if (filename && FILE_EXTENSIONS.some(ext => filename.toLowerCase().endsWith(ext.toLowerCase()))) {
+      // Decode URL encoding
+      try {
+        return decodeURIComponent(filename);
+      } catch (e) {
+        // If decode fails, return as-is
+        return filename;
+      }
+    }
+  } catch (e) {
+    // Continue to fallback
+  }
+  
   // Try to extract filename from link text if it contains extension
   if (linkText) {
     const extensionPattern = FILE_EXTENSIONS.map(ext => ext.replace('.', '\\.')).join('|');
     const regex = new RegExp(`([^\\\\/]+\\.(${extensionPattern.replace(/\\\./g, '')}))`, 'i');
     const match = linkText.match(regex);
     if (match) {
-      return decodeURIComponent(match[1].trim());
+      // Link text is already decoded by the browser, no need to decode again
+      return match[1].trim();
     }
-  }
-  
-  // Try to extract from URL path
-  try {
-    const urlObj = new URL(url, window.location.href);
-    const pathname = urlObj.pathname;
-    const filename = pathname.split('/').pop();
-    
-    // If we got a meaningful filename from URL, use it (decode URL encoding)
-    if (filename && FILE_EXTENSIONS.some(ext => filename.toLowerCase().endsWith(ext.toLowerCase()))) {
-      return decodeURIComponent(filename);
-    }
-  } catch (e) {
-    // Continue to fallback
   }
   
   // Fallback: Try to find filename in nearby DOM elements (for sites like vadapav.mov)
@@ -162,7 +169,7 @@ function getFilenameFromUrl(url, downloadAttr = '', linkText = '') {
     const regex = new RegExp(`([^\\\\/]+\\.(${extensionPattern.replace(/\\\./g, '')}))`, 'i');
     const match = pageTitle.match(regex);
     if (match) {
-      return decodeURIComponent(match[1].trim());
+      return match[1].trim();
     }
   } catch (e) {
     // Continue to fallback
