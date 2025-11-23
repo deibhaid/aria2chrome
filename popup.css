@@ -354,6 +354,11 @@ h1 {
   border: 1px solid #ccc;
   font-family: monospace;
   min-height: 150px;
+  white-space: pre;
+  overflow-x: auto;
+  overflow-y: auto;
+  word-wrap: normal;
+  overflow-wrap: normal;
 }
 
 .modal-hint {
