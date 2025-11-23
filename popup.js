@@ -315,7 +315,16 @@ function renameDownload(gid) {
     filename: newName.trim()
   }, response => {
     if (response && response.success) {
-      refreshDownloads();
+      if (response.requiresRestart) {
+        let message = 'Filename updated. The download has been paused so it can restart under the new name when you click Resume.';
+        if (response.hadProgress) {
+          message += '\n\naria2 cannot rename files that already have partial data. If you want to keep the existing progress, rename the partial file and its .aria2 sidecar on disk to match the new name before resuming.';
+        }
+        alert(message);
+      }
+      if (!response.unchanged) {
+        refreshDownloads();
+      }
     } else {
       alert('Failed to rename download: ' + (response?.error || 'Unknown error'));
     }

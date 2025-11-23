@@ -841,6 +841,14 @@ async function resumeDownload(gid, manualResume = true) {
       throw new Error('Download not found in tracking');
     }
     
+    if (download.renameRequiresRestart) {
+      if (!manualResume) {
+        return { success: false, error: 'Rename pending - manual resume required' };
+      }
+      const restartResult = await restartDownloadAfterRename(download);
+      return restartResult;
+    }
+    
     // If it's already complete, just return success
     if (download.status === 'complete') {
       return { success: true, message: 'Download already complete' };
@@ -1607,6 +1615,77 @@ async function updateDownloadUrl(gid, newUrl) {
   }
 }
 
+async function restartDownloadAfterRename(download) {
+  const oldGid = download.gid;
+  const preserved = { ...download };
+  const metadata = {
+    pageUrl: download.pageUrl || '',
+    pageTitle: download.pageTitle || ''
+  };
+  
+  // Remove from tracking so addDownload doesn't treat it as duplicate
+  delete downloads[oldGid];
+  await saveDownloads();
+  
+  try {
+    try {
+      await aria2RPC('aria2.forcePause', [oldGid]);
+    } catch (e) {
+      // Already paused or gone - safe to ignore
+    }
+    
+    try {
+      await aria2RPC('aria2.remove', [oldGid]);
+    } catch (e) {
+      try {
+        await aria2RPC('aria2.removeDownloadResult', [oldGid]);
+      } catch (e2) {
+        // aria2 may have already dropped it
+      }
+    }
+    
+    const result = await startDownload(preserved.url, preserved.filename, metadata);
+    if (!result.success) {
+      downloads[oldGid] = preserved;
+      downloads[oldGid].renameRequiresRestart = true;
+      await saveDownloads();
+      return { success: false, error: result.error || 'Failed to restart download with new filename' };
+    }
+    
+    const newGid = result.gid;
+    const newDownload = downloads[newGid];
+    if (newDownload) {
+      newDownload.renameRequiresRestart = false;
+      newDownload.renameRequestedAt = preserved.renameRequestedAt;
+      newDownload.pendingRenameFrom = undefined;
+      newDownload.pageUrl = metadata.pageUrl;
+      newDownload.pageTitle = metadata.pageTitle;
+      newDownload.retryCount = preserved.retryCount || 0;
+      newDownload.lastRetryTime = preserved.lastRetryTime || 0;
+      if (preserved.previousFilenames) {
+        newDownload.previousFilenames = preserved.previousFilenames;
+      }
+      if (preserved.renamedFrom) {
+        newDownload.renamedFrom = preserved.renamedFrom;
+      }
+    }
+    
+    await saveDownloads();
+    logInfo('Restarted download with new filename', {
+      oldGid,
+      newGid,
+      filename: preserved.filename
+    });
+    
+    return { success: true, message: 'Download restarted with new filename', restarted: true, gid: newGid };
+  } catch (error) {
+    downloads[oldGid] = preserved;
+    downloads[oldGid].renameRequiresRestart = true;
+    await saveDownloads();
+    return { success: false, error: error.message };
+  }
+}
+
 async function renameDownload(gid, newFilename) {
   try {
     if (!newFilename || !newFilename.trim()) {
@@ -1618,7 +1697,21 @@ async function renameDownload(gid, newFilename) {
     }
     
     const sanitizedName = newFilename.trim();
+    const previousName = download.filename;
+    
+    if (previousName === sanitizedName) {
+      return { success: true, unchanged: true };
+    }
+    
     download.filename = sanitizedName;
+    if (previousName) {
+      download.previousFilenames = Array.isArray(download.previousFilenames) 
+        ? [...download.previousFilenames, previousName] 
+        : [previousName];
+    }
+    
+    let requiresRestart = false;
+    let hadProgress = false;
     
     if (download.status === 'complete' && download.filePath) {
       try {
@@ -1635,11 +1728,42 @@ async function renameDownload(gid, newFilename) {
       } catch (error) {
         console.warn('[Aria2 Downloader] Native rename unavailable or failed:', error);
       }
+    } else if (download.status === 'queued') {
+      const queueEntry = downloadQueue.find(entry => entry.queueId === download.queueId);
+      if (queueEntry) {
+        queueEntry.filename = sanitizedName;
+      }
+    } else if (download.status !== 'removed') {
+      requiresRestart = true;
+      const completedBytes = parseInt(download.completedLength || '0', 10);
+      hadProgress = !isNaN(completedBytes) && completedBytes > 0;
+      const wasActiveOrWaiting = download.status === 'active' || download.status === 'waiting';
+      download.renameRequiresRestart = true;
+      download.renameRequestedAt = Date.now();
+      download.pendingRenameFrom = previousName;
+      download.status = 'paused';
+      download.downloadSpeed = '0';
+      
+      if (download.gid && wasActiveOrWaiting) {
+        try {
+          await aria2RPC('aria2.forcePause', [download.gid]);
+        } catch (error) {
+          // Ignore - download might already be paused/removed
+        }
+      }
     }
+    
+    logInfo('Rename requested', {
+      gid,
+      oldName: previousName,
+      newName: sanitizedName,
+      requiresRestart,
+      hadProgress
+    });
     
     await saveDownloads();
     
-    return { success: true };
+    return { success: true, requiresRestart, hadProgress };
   } catch (error) {
     return { success: false, error: error.message };
   }
