@@ -499,7 +499,14 @@ function collectDirectoryFilesFromIndex() {
     if (fileDirPath !== normalizedDirPath) return; // Only current directory
     
     const filenameSegment = fileUrl.pathname.split('/').filter(Boolean).pop();
-    const filename = decodeURIComponent(filenameSegment || link.textContent || `file-${files.size + 1}`).trim();
+    let filename;
+    try {
+      filename = decodeURIComponent(filenameSegment || link.textContent || `file-${files.size + 1}`);
+    } catch (e) {
+      console.warn('[Aria2 Downloader] Directory index decode failed:', e);
+      filename = (filenameSegment || link.textContent || `file-${files.size + 1}`);
+    }
+    filename = (filename || '').trim();
     
     if (!filename) return;
     if (!files.has(fileUrl.href)) {
