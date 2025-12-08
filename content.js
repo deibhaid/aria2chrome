@@ -610,4 +610,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     processDirectoryDownloadAllRequest('context-menu', sendResponse);
     return true;
   }
+  
+  if (request.action === 'promptFilenameForDownload') {
+    (async () => {
+      const suggestedName = request.suggestedName || 'download';
+      const allowPicker = request.allowFilePicker !== false;
+      
+      // Prefer file picker when available and allowed
+      if (allowPicker && window.isSecureContext && window.showSaveFilePicker) {
+        try {
+          const fileHandle = await window.showSaveFilePicker({
+            suggestedName,
+            types: [{
+              description: 'All Files',
+              accept: {'*/*': []}
+            }],
+            excludeAcceptAllOption: false
+          });
+          
+          const file = await fileHandle.getFile();
+          sendResponse({ success: true, filename: file.name });
+          return;
+        } catch (error) {
+          if (error.name === 'AbortError') {
+            sendResponse({ success: false, cancelled: true });
+            return;
+          }
+          // Fall through to prompt fallback on other errors
+          console.warn('[Aria2 Downloader] File picker unavailable, falling back to prompt:', error);
+        }
+      }
+      
+      // Fallback prompt (works even without secure context)
+      const entered = prompt('Enter filename:', suggestedName);
+      if (!entered || !entered.trim()) {
+        sendResponse({ success: false, cancelled: true });
+        return;
+      }
+      
+      sendResponse({ success: true, filename: entered.trim() });
+    })();
+    
+    return true;
+  }
 });

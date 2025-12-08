@@ -240,8 +240,15 @@ async function handleLinkContextDownload(info, tab) {
     isContextMenu: true
   };
   
-  // Context menu downloads should await confirmation (will trigger file picker in popup/content script)
-  const result = await addDownload(url, filename, metadata, true);
+  const chosenFilename = await promptFilenameFromTab(tab?.id, filename);
+  if (chosenFilename === null) {
+    logInfo('Context menu download cancelled by user', { url, filename });
+    return;
+  }
+  
+  const finalName = chosenFilename || filename;
+  
+  const result = await addDownload(url, finalName, metadata, true);
   if (!result.success && !result.duplicate && !result.awaiting_confirmation) {
     createNotification({
       type: 'basic',
@@ -254,9 +261,42 @@ async function handleLinkContextDownload(info, tab) {
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Aria2Chrome',
-      message: `${filename} ready - open popup to confirm and start`
+      message: `${finalName} ready - open popup to confirm and start`
     });
   }
+}
+
+async function promptFilenameFromTab(tabId, suggestedName) {
+  if (!tabId || !chrome.tabs || !chrome.tabs.sendMessage) {
+    return suggestedName;
+  }
+  
+  return await new Promise(resolve => {
+    chrome.tabs.sendMessage(tabId, {
+      action: 'promptFilenameForDownload',
+      suggestedName,
+      allowFilePicker: true
+    }, response => {
+      if (chrome.runtime.lastError) {
+        console.warn('[Aria2 Downloader] Could not prompt filename in tab:', chrome.runtime.lastError.message);
+        resolve(suggestedName);
+        return;
+      }
+      
+      if (!response) {
+        resolve(suggestedName);
+        return;
+      }
+      
+      if (response.success && response.filename) {
+        resolve(response.filename);
+      } else if (response.cancelled) {
+        resolve(null);
+      } else {
+        resolve(suggestedName);
+      }
+    });
+  });
 }
 
 // Initialize context menus on service worker load
