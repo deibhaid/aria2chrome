@@ -241,7 +241,7 @@ async function handleLinkContextDownload(info, tab) {
   };
   
   // Context menu downloads should await confirmation (will trigger file picker in popup/content script)
-  const result = await addDownload(url, filename, metadata, false);
+  const result = await addDownload(url, filename, metadata, true);
   if (!result.success && !result.duplicate && !result.awaiting_confirmation) {
     createNotification({
       type: 'basic',
