@@ -2497,10 +2497,15 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     finalFilename = finalFilename.split(/[/\\]/).pop();
     
     // Add to aria2
-    const result = await addDownload(downloadInfo.url, finalFilename, {
-      pageUrl: downloadInfo.referrer || downloadInfo.url,
-      pageTitle: 'Browser Download'
-    });
+    const result = await addDownload(
+      downloadInfo.url,
+      finalFilename,
+      {
+        pageUrl: downloadInfo.referrer || downloadInfo.url,
+        pageTitle: 'Browser Download'
+      },
+      true // User already confirmed name in the browser Save dialog
+    );
     
     if (result.success) {
       console.log('[Aria2 Downloader] ✓ Download added to aria2 successfully');
