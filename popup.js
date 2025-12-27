@@ -213,9 +213,28 @@ function pauseDownload(gid) {
     gid: gid
   }, response => {
     if (response && response.success) {
+      // Successfully paused (or already paused)
+      if (response.message) {
+        console.log('[Popup] Pause:', response.message);
+      }
       refreshDownloads();
     } else {
-      console.error('Failed to pause download:', response?.error);
+      const errorMsg = response?.error || 'Unknown error';
+      console.error('[Popup] Failed to pause download:', errorMsg);
+      
+      // Show user-friendly error for specific cases
+      if (errorMsg.includes('already complete')) {
+        // Don't show alert for this - just refresh to show correct state
+        console.log('[Popup] Download is complete, refreshing UI');
+      } else if (errorMsg.includes('error state')) {
+        // Don't alert - the UI will show the error state
+        console.log('[Popup] Download in error state');
+      } else if (errorMsg.includes('not found')) {
+        console.log('[Popup] Download not found');
+      } else if (errorMsg.includes('aria2c is not running')) {
+        alert('Cannot pause: aria2c is not running!\n\nPlease start aria2c and try again.');
+      }
+      
       refreshDownloads();
     }
   });

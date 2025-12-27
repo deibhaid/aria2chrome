@@ -1216,10 +1216,94 @@ async function resumeDownload(gid, manualResume = true) {
 // Pause download
 async function pauseDownload(gid) {
   try {
+    // First check if the download exists and is in a pausable state
+    const download = downloads[gid];
+    if (!download) {
+      return { success: false, error: 'Download not found in tracking' };
+    }
+    
+    // Check if already in a terminal or non-pausable state
+    if (download.status === 'complete') {
+      return { success: false, error: 'Download is already complete' };
+    }
+    if (download.status === 'paused') {
+      return { success: true, message: 'Download is already paused' };
+    }
+    if (download.status === 'error' || download.status === 'failed_permanently') {
+      return { success: false, error: 'Download is in error state - use Resume to retry' };
+    }
+    if (download.status === 'queued') {
+      // For queued downloads, just mark as paused in our tracking (not in aria2 yet)
+      download.status = 'paused';
+      await saveDownloads();
+      return { success: true, message: 'Queued download paused' };
+    }
+    if (download.status === 'awaiting_confirmation') {
+      return { success: false, error: 'Download is awaiting confirmation - use Remove to cancel' };
+    }
+    
+    // Try to get status from aria2 first
+    const status = await getDownloadStatus(gid);
+    
+    if (!status) {
+      // Download not in aria2 - mark as paused in our tracking
+      download.status = 'paused';
+      await saveDownloads();
+      return { success: true, message: 'Download marked as paused (not active in aria2)' };
+    }
+    
+    // Check aria2 status
+    if (status.status === 'complete') {
+      download.status = 'complete';
+      await saveDownloads();
+      return { success: false, error: 'Download is already complete' };
+    }
+    if (status.status === 'paused') {
+      download.status = 'paused';
+      await saveDownloads();
+      return { success: true, message: 'Download is already paused' };
+    }
+    if (status.status === 'error') {
+      download.status = 'error';
+      await saveDownloads();
+      return { success: false, error: 'Download is in error state - use Resume to retry' };
+    }
+    
+    // Now attempt to pause
     await aria2RPC('aria2.pause', [gid]);
+    download.status = 'paused';
+    await saveDownloads();
     return { success: true };
   } catch (error) {
-    return { success: false, error: error.message };
+    // Handle specific aria2 errors
+    const errorMsg = error.message || 'Unknown error';
+    
+    // aria2 returns specific error messages for invalid operations
+    if (errorMsg.includes('is not found') || errorMsg.includes('GID') && errorMsg.includes('not found')) {
+      // Download was removed from aria2
+      const download = downloads[gid];
+      if (download) {
+        download.status = 'paused';
+        await saveDownloads();
+      }
+      return { success: true, message: 'Download marked as paused (no longer in aria2)' };
+    }
+    
+    if (errorMsg.includes('cannot be paused') || errorMsg.includes('HTTP error! status: 400')) {
+      // Check our tracking to give a more helpful message
+      const download = downloads[gid];
+      if (download) {
+        if (download.status === 'complete') {
+          return { success: false, error: 'Download is already complete' };
+        }
+        // Mark as paused anyway since aria2 can't pause it
+        download.status = 'paused';
+        await saveDownloads();
+        return { success: true, message: 'Download state updated' };
+      }
+    }
+    
+    return { success: false, error: errorMsg };
   }
 }
 
