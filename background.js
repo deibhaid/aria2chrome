@@ -805,11 +805,12 @@ async function processQueue() {
     
     // Start the download (preserve skipConfirmation flag)
     const result = await startDownload(
-      queuedDownload.url, 
-      queuedDownload.filename, 
+      queuedDownload.url,
+      queuedDownload.filename,
       {
         pageUrl: queuedDownload.pageUrl,
-        pageTitle: queuedDownload.pageTitle
+        pageTitle: queuedDownload.pageTitle,
+        chromeDownloadId: queuedDownload.chromeDownloadId
       },
       queuedDownload.skipConfirmation || false
     );
@@ -850,7 +851,8 @@ async function startQueuedDownloadManually(queueId) {
       queuedDownload.filename,
       {
         pageUrl: queuedDownload.pageUrl,
-        pageTitle: queuedDownload.pageTitle
+        pageTitle: queuedDownload.pageTitle,
+        chromeDownloadId: queuedDownload.chromeDownloadId
       },
       queuedDownload.skipConfirmation || false
     );
@@ -1648,6 +1650,16 @@ function downloadsShowSafe(downloadId) {
   });
 }
 
+/** Opens Chrome's default download directory in the OS file manager (often ~/Downloads). */
+function showDefaultFolderSafe() {
+  return new Promise((resolve) => {
+    chrome.downloads.showDefaultFolder(() => {
+      const err = chrome.runtime.lastError;
+      resolve({ ok: !err, error: err ? err.message : null });
+    });
+  });
+}
+
 /** Optional native host (see native/README.md): Finder / Explorer when Chrome has no valid download id. */
 function revealViaNativeHost(filepath) {
   if (typeof chrome.runtime.sendNativeMessage !== 'function') {
@@ -1700,23 +1712,35 @@ async function showFileInFolder(filepath) {
     }
 
     // 2) Match Chrome's download history (filename) — may recover id after extension reload
+    const basename = (p) =>
+      (p || '')
+        .split(/[/\\]/)
+        .filter(Boolean)
+        .pop() || '';
     const filename = download.filename;
-    if (filename) {
+    const namesToTry = [];
+    if (filename) namesToTry.push(filename);
+    const fromPath = basename(filepath);
+    if (fromPath && !namesToTry.includes(fromPath)) namesToTry.push(fromPath);
+
+    for (const name of namesToTry) {
+      if (!name) continue;
       try {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const chromeDownloads = await chrome.downloads.search({
-          filenameRegex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          filenameRegex: escaped,
           exists: true,
           limit: 20,
           orderBy: ['-startTime']
         });
 
         let matchingDownload = chromeDownloads.find(
-          (d) => d.filename && d.filename.endsWith(filename)
+          (d) => d.filename && d.filename.endsWith(name)
         );
         if (!matchingDownload && chromeDownloads.length > 0) {
           matchingDownload = chromeDownloads.find(
             (d) =>
-              d.filename && d.filename.toLowerCase().includes(filename.toLowerCase())
+              d.filename && d.filename.toLowerCase().includes(name.toLowerCase())
           );
         }
 
@@ -1734,7 +1758,7 @@ async function showFileInFolder(filepath) {
       }
     }
 
-    // 3) Restored backup / aria2-only: optional native host (open -R / explorer /select)
+    // 3) Optional native host (open -R / explorer /select) — e.g. restored backup without Chrome id
     if (filepath && isLikelyLocalFilePath(filepath)) {
       const r3 = await revealViaNativeHost(filepath);
       if (r3.ok) {
@@ -1743,11 +1767,19 @@ async function showFileInFolder(filepath) {
       logInfo('Native reveal not available or failed', { error: r3.error });
     }
 
+    // 4) Last resort: Chrome's default download folder in the OS file manager (often same as aria2 dir)
+    const r4 = await showDefaultFolderSafe();
+    if (r4.ok) {
+      logInfo('showFileInFolder: opened default download folder (no Chrome download id for this item)');
+      return { success: true, openedDefaultDownloadFolder: true };
+    }
+    logInfo('showDefaultFolder failed', { error: r4.error });
+
     createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'File location',
-      message: `Saved at:\n${filepath}\n\nOptional: install the native helper (see native/README.md) to open Finder/Explorer for restored items.`,
+      message: `Saved at:\n${filepath}\n\nOptional: install the native helper (see native/README.md) to reveal this file when Chrome has no matching download entry.`,
       isClickable: true
     });
 
@@ -2544,13 +2576,15 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     // Remove any path from filename
     finalFilename = finalFilename.split(/[/\\]/).pop();
     
-    // Add to aria2
+    // Add to aria2 — keep Chrome's interrupted download entry so chrome.downloads.show(id)
+    // can open Finder/Explorer when the file lands on the same path Chrome would have used.
     const result = await addDownload(
       downloadInfo.url,
       finalFilename,
       {
         pageUrl: downloadInfo.referrer || downloadInfo.url,
-        pageTitle: 'Browser Download'
+        pageTitle: 'Browser Download',
+        chromeDownloadId: delta.id
       },
       true // User already confirmed name in the browser Save dialog
     );
@@ -2560,13 +2594,9 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     } else {
       console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
     }
-    
-    // Erase from Chrome download history
-    chrome.downloads.erase({ id: delta.id }, () => {
-      if (chrome.runtime.lastError) {
-        console.log('[Aria2 Downloader] Could not erase download:', chrome.runtime.lastError.message);
-      }
-    });
+
+    // Do not erase this Chrome download: we need the id for "Show in folder" (see showFileInFolder).
+    // It remains visible in chrome://downloads as interrupted/cancelled while aria2 completes the file.
   }
 });
 

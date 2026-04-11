@@ -120,9 +120,13 @@ _The extension will be published to official stores soon._
 4. Click "Test Connection" to verify the connection
 5. Click "Save Settings"
 
-### Optional: Show in Finder / Explorer (restored backups)
+### Show in Finder / Explorer
 
-Chrome’s **Show in folder** uses the real system file manager when the browser still has a **download id**. After you reinstall the extension or restore `download.json`, those ids are often missing, so Chrome cannot reveal the file by itself. You can install a **small optional native helper** so **Show in folder** still opens Finder (macOS) or Explorer (Windows) with the file selected. See [native/README.md](native/README.md).
+For **intercepted** downloads, the extension keeps Chrome’s download entry (so **Show in folder** can use `chrome.downloads.show` like a normal download). You may see a **cancelled/interrupted** row in `chrome://downloads` while aria2 finishes the file — that is expected.
+
+Set the extension **Download Directory** (aria2) to match Chrome’s default download folder (often `~/Downloads`) so the completed file path matches what Chrome expects for **Show in folder**.
+
+If Chrome has no matching entry (e.g. restored backup), the extension tries an **optional native helper**, then opens Chrome’s **default download folder** in the file manager. See [native/README.md](native/README.md) for the helper.
 
 ## Usage
 
