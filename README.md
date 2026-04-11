@@ -126,7 +126,9 @@ For **intercepted** downloads, the extension keeps Chrome’s download entry (so
 
 Set the extension **Download Directory** (aria2) to match Chrome’s default download folder (often `~/Downloads`) so the completed file path matches what Chrome expects for **Show in folder**.
 
-If Chrome has no matching entry (e.g. restored backup), install the **optional native helper** — see [native/README.md](native/README.md).
+If `chrome.downloads.show` still cannot find a row (cleared history, encoding mismatch, etc.), the extension falls back to opening the **parent folder** in a new tab (`file://…`). That is a directory listing in Chrome, not Finder. If that tab is blocked, enable **Allow access to file URLs** for this extension under `chrome://extensions` → **Details**.
+
+For **Reveal in Finder** with the file selected, install the **optional native helper** — see [native/README.md](native/README.md).
 
 ## Usage
 

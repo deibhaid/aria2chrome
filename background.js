@@ -1689,6 +1689,51 @@ function urlsEqualForChromeHistory(a, b) {
   }
 }
 
+/** Parent directory of a local file path (POSIX or Windows). */
+function parentDirPath(filepath) {
+  if (!filepath || typeof filepath !== 'string') return '';
+  const p = filepath.replace(/[/\\]+$/, '');
+  const m = p.match(/^(.*)[/\\]([^/\\]+)$/);
+  return m ? m[1] : '';
+}
+
+/** file:/// URL for opening a local directory in a tab (segments percent-encoded for spaces, etc.). */
+function buildFileUrlForDirectory(absDirPath) {
+  try {
+    const win = /^[A-Za-z]:[\\/]/.test(absDirPath);
+    if (win) {
+      const norm = absDirPath.replace(/\\/g, '/');
+      const m = norm.match(/^([A-Za-z]:)\/(.*)$/);
+      if (!m) return null;
+      const segs = m[2].split('/').filter(Boolean);
+      const enc = segs.map((s) => encodeURIComponent(s)).join('/');
+      return `file:///${m[1]}/${enc}/`;
+    }
+    const normalized = absDirPath.replace(/\\/g, '/');
+    if (!normalized.startsWith('/')) return null;
+    const segments = normalized.split('/').filter(Boolean);
+    const enc = segments.map((s) => encodeURIComponent(s)).join('/');
+    return `file:///${enc}/`;
+  } catch {
+    return null;
+  }
+}
+
+/** Last resort: open the Downloads (parent) folder — may show a directory listing in Chrome, not Finder. */
+async function openParentFolderInBrowserTab(filepath) {
+  try {
+    const parent = parentDirPath(filepath);
+    if (!parent) return { ok: false };
+    const url = buildFileUrlForDirectory(parent);
+    if (!url) return { ok: false };
+    await chrome.tabs.create({ url, active: true });
+    return { ok: true };
+  } catch (e) {
+    logInfo('openParentFolderInBrowserTab failed', { error: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
 /** Optional native host (see native/README.md): Finder / Explorer when Chrome has no valid download id. */
 function revealViaNativeHost(filepath) {
   if (typeof chrome.runtime.sendNativeMessage !== 'function') {
@@ -1815,6 +1860,40 @@ async function showFileInFolder(filepath, gid) {
       }
     }
 
+    // 2a) Loose Chrome match: same hostname + basename (Chrome may store a different URL encoding)
+    if (download.url && /^https?:/i.test(download.url)) {
+      try {
+        let host = '';
+        try {
+          host = new URL(download.url).hostname;
+        } catch (e) {
+          host = '';
+        }
+        const pool = host
+          ? await chrome.downloads.search({
+              query: [host],
+              limit: 200,
+              orderBy: ['-startTime']
+            })
+          : await chrome.downloads.search({ limit: 200, orderBy: ['-startTime'] });
+        for (const d of pool) {
+          if (!d.url || !d.filename) continue;
+          if (host && !d.url.includes(host)) continue;
+          const dBase = normalizeBasenameForMatch(d.filename);
+          if (!wantNorm || dBase !== wantNorm) continue;
+          const rLoose = await downloadsShowSafe(d.id);
+          if (rLoose.ok) {
+            download.chromeDownloadId = d.id;
+            await saveDownloads();
+            return { success: true };
+          }
+          logInfo('downloads.show (loose hostname+basename) failed', { error: rLoose.error });
+        }
+      } catch (e) {
+        console.log('[Aria2 Downloader] loose Chrome search failed:', e);
+      }
+    }
+
     // 2b) Match Chrome history by URL + basename (encoding of spaces/quotes often differs from our stored url)
     if (download.url && /^https?:/i.test(download.url)) {
       try {
@@ -1881,11 +1960,20 @@ async function showFileInFolder(filepath, gid) {
       logInfo('Native reveal not available or failed', { error: r3.error });
     }
 
+    // 4) Open parent directory in a tab (file://). Not Finder, but works without native host; spaces OK in encoded URL.
+    if (filepath && isLikelyLocalFilePath(filepath)) {
+      const rTab = await openParentFolderInBrowserTab(filepath);
+      if (rTab.ok) {
+        logInfo('showFileInFolder: opened parent directory tab as fallback');
+        return { success: true, openedParentDirectoryTab: true };
+      }
+    }
+
     createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'File location',
-      message: `Saved at:\n${filepath}\n\nOptional: install the native helper (see native/README.md) to reveal this file when Chrome has no matching download entry.`,
+      message: `Saved at:\n${filepath}\n\nOptional: install the native helper (see native/README.md) for Finder with file selected.`,
       isClickable: true
     });
 

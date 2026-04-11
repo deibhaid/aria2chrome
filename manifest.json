@@ -1,19 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Aria2Chrome",
-  "version": "1.1.20",
+  "version": "1.1.21",
   "description": "Download manager using aria2c with automatic resume, smart retry, and accurate progress tracking",
   "permissions": [
     "storage",
     "downloads",
     "notifications",
     "activeTab",
+    "tabs",
     "contextMenus",
     "cookies",
     "nativeMessaging"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "file://*/*"
   ],
   "background": {
     "service_worker": "background.js",
