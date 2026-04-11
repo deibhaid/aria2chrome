@@ -47,11 +47,13 @@ if [ "$SOURCE_IMAGE" = "icon.svg" ]; then
         exit 1
     fi
 else
-    # Use ImageMagick for PNG source
+    # Use ImageMagick for PNG source (non-square → square via center crop).
+    # Plain -resize WxH preserves aspect ratio, which breaks Chrome/Web Store
+    # (e.g. 548×864 → 81×128). ^ = fill the box, then -extent crops to square.
     if command -v magick &> /dev/null; then
-        magick "$SOURCE_IMAGE" -resize 128x128 -quality 100 icon128.png
-        magick "$SOURCE_IMAGE" -resize 48x48 -quality 100 icon48.png
-        magick "$SOURCE_IMAGE" -resize 16x16 -quality 100 icon16.png
+        magick "$SOURCE_IMAGE" -resize 128x128^ -gravity center -extent 128x128 -quality 100 icon128.png
+        magick "$SOURCE_IMAGE" -resize 48x48^ -gravity center -extent 48x48 -quality 100 icon48.png
+        magick "$SOURCE_IMAGE" -resize 16x16^ -gravity center -extent 16x16 -quality 100 icon16.png
         echo "✅ Icons created successfully from rocket.png"
     else
         echo "❌ ImageMagick not found. Please install it: brew install imagemagick"

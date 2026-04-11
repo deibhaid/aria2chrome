@@ -2484,9 +2484,6 @@ async function importBackup(backupData) {
 // Store downloads we want to intercept (keyed by download ID)
 const downloadsToIntercept = new Map();
 
-// Counter for declarativeNetRequest rule IDs
-let ruleIdCounter = 1;
-
 // Intercept browser downloads EARLY using onDeterminingFilename
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   console.log('[Aria2 Downloader] onDeterminingFilename triggered:', {
