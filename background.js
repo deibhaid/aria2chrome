@@ -24,7 +24,7 @@ let ignoreNextDownloads = new Set(); // Track downloads to ignore (prevent loops
 const directoryIndexTabs = new Map(); // Track tabs that expose HTTP directory listings
 const DIRECTORY_CONTEXT_MENU_ID = 'aria2chrome-download-directory';
 const LINK_CONTEXT_MENU_ID = 'aria2chrome-download-link';
-let showNotifications = true;
+let showNotifications = false;
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -460,6 +460,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes.fileExtensions || changes.customFileExtensions) {
     refreshInterceptExtensionsCache();
   }
+  if (changes.showNotifications) {
+    showNotifications = changes.showNotifications.newValue === true;
+  }
 });
 
 // Save configuration to storage
@@ -805,11 +808,12 @@ async function processQueue() {
     
     // Start the download (preserve skipConfirmation flag)
     const result = await startDownload(
-      queuedDownload.url, 
-      queuedDownload.filename, 
+      queuedDownload.url,
+      queuedDownload.filename,
       {
         pageUrl: queuedDownload.pageUrl,
-        pageTitle: queuedDownload.pageTitle
+        pageTitle: queuedDownload.pageTitle,
+        chromeDownloadId: queuedDownload.chromeDownloadId
       },
       queuedDownload.skipConfirmation || false
     );
@@ -850,7 +854,8 @@ async function startQueuedDownloadManually(queueId) {
       queuedDownload.filename,
       {
         pageUrl: queuedDownload.pageUrl,
-        pageTitle: queuedDownload.pageTitle
+        pageTitle: queuedDownload.pageTitle,
+        chromeDownloadId: queuedDownload.chromeDownloadId
       },
       queuedDownload.skipConfirmation || false
     );
@@ -1621,150 +1626,310 @@ async function clearHistory() {
   return clearedCount;
 }
 
-// Show file in folder (cross-platform: macOS Finder, Windows Explorer, Linux file managers)
-async function showFileInFolder(filepath) {
+/** True if string looks like an on-disk path (not http). */
+function isLikelyLocalFilePath(p) {
+  if (!p || typeof p !== 'string') return false;
+  const t = p.trim();
+  if (t.startsWith('file://')) return true;
+  if (t.startsWith('/')) return true;
+  if (/^[A-Za-z]:[\\/]/.test(t)) return true;
+  return false;
+}
+
+/** Chrome uses the OS file manager for downloads.show — must use callback to clear lastError. */
+function downloadsShowSafe(downloadId) {
+  const id =
+    typeof downloadId === 'number'
+      ? downloadId
+      : parseInt(String(downloadId), 10);
+  if (Number.isNaN(id)) {
+    return Promise.resolve({ ok: false, error: 'Invalid download id' });
+  }
+  return new Promise((resolve) => {
+    chrome.downloads.show(id, () => {
+      const err = chrome.runtime.lastError;
+      resolve({ ok: !err, error: err ? err.message : null });
+    });
+  });
+}
+
+/** Last path segment for comparison (encoding / apostrophe variants). */
+function normalizeBasenameForMatch(p) {
+  if (!p || typeof p !== 'string') return '';
+  const base = p.split(/[/\\]/).filter(Boolean).pop() || '';
+  return base
+    .normalize('NFC')
+    .replace(/\u2019/g, "'")
+    .replace(/\u2018/g, "'")
+    .trim();
+}
+
+/**
+ * Chrome may store the same resource as a slightly different URL string (encoding of spaces, quotes, etc.).
+ * Compare origin + decoded path (+ search) so we still find the interrupted download row.
+ */
+function safeDecodePathSegment(path) {
   try {
-    // Find the download with this filepath
-    const download = Object.values(downloads).find(d => d.filePath === filepath);
-    
+    return decodeURIComponent(path.replace(/\+/g, '%20'));
+  } catch {
+    return path;
+  }
+}
+
+function urlsEqualForChromeHistory(a, b) {
+  if (!a || !b) return false;
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    if (ua.origin !== ub.origin) return false;
+    const pa = safeDecodePathSegment(ua.pathname);
+    const pb = safeDecodePathSegment(ub.pathname);
+    if (pa !== pb) return false;
+    if (ua.search !== ub.search) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Optional native host (see native/README.md): Finder / Explorer when Chrome has no valid download id. */
+function revealViaNativeHost(filepath) {
+  if (typeof chrome.runtime.sendNativeMessage !== 'function') {
+    return Promise.resolve({ ok: false, error: 'Native messaging not available' });
+  }
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage(
+        'com.deibhaid.aria2chrome.reveal',
+        { path: filepath },
+        (response) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            resolve({ ok: false, error: err.message });
+            return;
+          }
+          if (response && response.ok === false) {
+            resolve({ ok: false, error: response.error || 'Native host failed' });
+            return;
+          }
+          resolve({ ok: true });
+        }
+      );
+    } catch (e) {
+      resolve({ ok: false, error: e.message });
+    }
+  });
+}
+
+// Show file in folder (Chrome uses OS Finder/Explorer via downloads.show when id is valid)
+// Prefer `gid`: never trust filepath from the popup DOM (HTML data-* can mangle &, ", <, etc.).
+async function showFileInFolder(filepath, gid) {
+  try {
+    let download = null;
+    if (gid != null && gid !== '' && downloads[gid]) {
+      download = downloads[gid];
+    }
+    if (!download && filepath) {
+      download = Object.values(downloads).find((d) => d.filePath === filepath);
+    }
     if (!download) {
       return { success: false, error: 'Download not found' };
     }
-    
-    // Method 1: Try using saved Chrome download ID
-    if (download.chromeDownloadId) {
-      try {
-        // This works cross-platform (macOS Finder, Windows Explorer, Linux Nautilus/Dolphin)
-        chrome.downloads.show(download.chromeDownloadId);
-        return { success: true };
-      } catch (e) {
-        console.log('Chrome download ID invalid, trying other methods...');
+    filepath = download.filePath;
+    if (!filepath) {
+      return { success: false, error: 'File path not available' };
+    }
+
+    // 1) Saved Chrome download id — same behavior as Chrome's "Show in folder"
+    if (download.chromeDownloadId != null && download.chromeDownloadId !== '') {
+      const sid = parseInt(String(download.chromeDownloadId), 10);
+      if (!Number.isNaN(sid)) {
+        try {
+          const stillThere = await chrome.downloads.search({ id: sid, limit: 1 });
+          if (!stillThere.length) {
+            delete download.chromeDownloadId;
+            await saveDownloads();
+            logInfo('Stale chromeDownloadId removed (not in Chrome history)', { sid });
+          }
+        } catch (e) {
+          console.log('[Aria2 Downloader] downloads.search by id failed:', e);
+        }
+      }
+      if (download.chromeDownloadId != null && download.chromeDownloadId !== '') {
+        const r1 = await downloadsShowSafe(download.chromeDownloadId);
+        if (r1.ok) {
+          return { success: true };
+        }
+        logInfo('downloads.show (saved id) failed', { error: r1.error });
+        if (r1.error && String(r1.error).includes('Invalid downloadId')) {
+          delete download.chromeDownloadId;
+          await saveDownloads();
+        }
       }
     }
-    
-    // Method 2: Search Chrome downloads history
+
+    // 2) Match Chrome's download history (filename) — may recover id after extension reload
+    const basename = (p) =>
+      (p || '')
+        .split(/[/\\]/)
+        .filter(Boolean)
+        .pop() || '';
+    const wantNorm = normalizeBasenameForMatch(filepath);
     const filename = download.filename;
-    if (filename) {
+    const namesToTry = [];
+    if (filename) namesToTry.push(filename);
+    const fromPath = basename(filepath);
+    if (fromPath && !namesToTry.includes(fromPath)) namesToTry.push(fromPath);
+
+    for (const name of namesToTry) {
+      if (!name) continue;
       try {
-        // Search Chrome downloads for this file
-        const chromeDownloads = await chrome.downloads.search({ 
-          filenameRegex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), // Escape special chars
-          exists: true,
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Do not use exists:true — intercepted rows stay "interrupted" in Chrome; aria2 owns the file.
+        const chromeDownloads = await chrome.downloads.search({
+          filenameRegex: escaped,
           limit: 20,
           orderBy: ['-startTime']
         });
-        
-        // Try to find exact match
-        let matchingDownload = chromeDownloads.find(d => 
-          d.filename && d.filename.endsWith(filename)
+
+        let matchingDownload = chromeDownloads.find(
+          (d) =>
+            d.filename &&
+            normalizeBasenameForMatch(d.filename) === normalizeBasenameForMatch(name)
         );
-        
-        // If exact match not found, try partial match
         if (!matchingDownload && chromeDownloads.length > 0) {
-          matchingDownload = chromeDownloads.find(d => 
-            d.filename && d.filename.toLowerCase().includes(filename.toLowerCase())
+          matchingDownload = chromeDownloads.find(
+            (d) =>
+              d.filename && d.filename.toLowerCase().includes(name.toLowerCase())
           );
         }
-        
+
         if (matchingDownload) {
-          chrome.downloads.show(matchingDownload.id);
-          // Save the chrome download ID for future use
-          download.chromeDownloadId = matchingDownload.id;
-          await saveDownloads();
-          return { success: true };
+          const r2 = await downloadsShowSafe(matchingDownload.id);
+          if (r2.ok) {
+            download.chromeDownloadId = matchingDownload.id;
+            await saveDownloads();
+            return { success: true };
+          }
+          logInfo('downloads.show (search) failed', { error: r2.error });
         }
       } catch (e) {
         console.log('Chrome downloads search failed:', e);
       }
     }
-    
-    // Method 3: Try to create a fake download to register the file location
-    if (filepath) {
+
+    // 2a) Loose Chrome match: same hostname + basename (Chrome may store a different URL encoding)
+    if (download.url && /^https?:/i.test(download.url)) {
       try {
-        // Get directory path and filename
-        const parts = filepath.split(/[/\\]/);
-        const file = parts.pop();
-        const directory = parts.join('/');
-        
-        // Create a minimal file download to register it with Chrome
-        // This will allow chrome.downloads.show() to work
-        const downloadId = await new Promise((resolve, reject) => {
-          chrome.downloads.download({
-            url: download.url || 'data:text/plain,', // Use original URL or empty data
-            filename: file,
-            conflictAction: 'uniquify', // Don't overwrite existing file
-            saveAs: false
-          }, (id) => {
-            if (chrome.runtime.lastError) {
-              reject(chrome.runtime.lastError);
-            } else {
-              resolve(id);
-            }
+        let host = '';
+        try {
+          host = new URL(download.url).hostname;
+        } catch (e) {
+          host = '';
+        }
+        const pool = host
+          ? await chrome.downloads.search({
+              query: [host],
+              limit: 200,
+              orderBy: ['-startTime']
+            })
+          : await chrome.downloads.search({ limit: 200, orderBy: ['-startTime'] });
+        for (const d of pool) {
+          if (!d.url || !d.filename) continue;
+          if (host && !d.url.includes(host)) continue;
+          const dBase = normalizeBasenameForMatch(d.filename);
+          if (!wantNorm || dBase !== wantNorm) continue;
+          const rLoose = await downloadsShowSafe(d.id);
+          if (rLoose.ok) {
+            download.chromeDownloadId = d.id;
+            await saveDownloads();
+            return { success: true };
+          }
+          logInfo('downloads.show (loose hostname+basename) failed', { error: rLoose.error });
+        }
+      } catch (e) {
+        console.log('[Aria2 Downloader] loose Chrome search failed:', e);
+      }
+    }
+
+    // 2b) Match Chrome history by URL + basename (encoding of spaces/quotes often differs from our stored url)
+    if (download.url && /^https?:/i.test(download.url)) {
+      try {
+        let host = '';
+        try {
+          host = new URL(download.url).hostname;
+        } catch (e) {
+          host = '';
+        }
+        const narrow = host
+          ? await chrome.downloads.search({
+              query: [host],
+              limit: 120,
+              orderBy: ['-startTime']
+            })
+          : await chrome.downloads.search({ limit: 120, orderBy: ['-startTime'] });
+
+        const urlEsc = download.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        let byUrl = [];
+        try {
+          byUrl = await chrome.downloads.search({
+            urlRegex: urlEsc,
+            limit: 40,
+            orderBy: ['-startTime']
           });
-        });
-        
-        // Wait a moment for download to register
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Cancel the download (we don't want to re-download)
-        await chrome.downloads.cancel(downloadId);
-        
-        // Now try to show it
-        chrome.downloads.show(downloadId);
-        
-        // Save this ID
-        download.chromeDownloadId = downloadId;
-        await saveDownloads();
-        
-        return { success: true };
+        } catch (e) {
+          logInfo('urlRegex search skipped', { error: String(e) });
+        }
+
+        const merged = [];
+        const seen = new Set();
+        for (const d of [...byUrl, ...narrow]) {
+          if (d && seen.has(d.id)) continue;
+          if (d) {
+            seen.add(d.id);
+            merged.push(d);
+          }
+        }
+
+        for (const d of merged) {
+          if (!d.url) continue;
+          const dBase = d.filename ? normalizeBasenameForMatch(d.filename) : '';
+          if (!wantNorm || !dBase || dBase !== wantNorm) continue;
+          if (!urlsEqualForChromeHistory(d.url, download.url)) continue;
+          const rUrl = await downloadsShowSafe(d.id);
+          if (rUrl.ok) {
+            download.chromeDownloadId = d.id;
+            await saveDownloads();
+            return { success: true };
+          }
+          logInfo('downloads.show (url+basename) failed', { error: rUrl.error });
+        }
       } catch (e) {
-        console.log('Failed to create fake download:', e);
+        console.log('[Aria2 Downloader] Chrome URL search failed:', e);
       }
     }
-    
-    // Method 4: Open directory in browser (opens native file manager)
-    if (filepath) {
-      try {
-        // Extract directory path
-        const parts = filepath.split(/[/\\]/);
-        parts.pop(); // Remove filename
-        const directory = parts.join('/');
-        
-        // Open directory as file:// URL
-        // This will open in the system's default file manager:
-        // - macOS: Finder
-        // - Windows: Explorer
-        // - Linux: Nautilus, Dolphin, etc.
-        const fileUrl = 'file://' + directory;
-        
-        await chrome.tabs.create({ url: fileUrl, active: false });
-        
-        // Close the tab after a moment (file manager will have opened)
-        setTimeout(async () => {
-          const tabs = await chrome.tabs.query({ url: fileUrl });
-          tabs.forEach(tab => chrome.tabs.remove(tab.id));
-        }, 1000);
-        
+
+    // 3) Optional native host (open -R / explorer /select) — e.g. restored backup without Chrome id
+    if (filepath && isLikelyLocalFilePath(filepath)) {
+      const r3 = await revealViaNativeHost(filepath);
+      if (r3.ok) {
         return { success: true };
-      } catch (e) {
-        console.log('Failed to open directory:', e);
       }
+      logInfo('Native reveal not available or failed', { error: r3.error });
     }
-    
-    // Final fallback: Show notification with file path
+
     createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
-      title: 'File Location',
-      message: `File saved at:\n${filepath}\n\nPlease open this location manually.`,
+      title: 'File location',
+      message: `Saved at:\n${filepath}\n\nInstall the optional native helper (native/README.md) to open Finder with this file selected when Chrome has no download entry.`,
       isClickable: true
     });
-    
-    return { 
-      success: false, 
-      error: `File is located at: ${filepath}` 
+
+    return {
+      success: false,
+      error: `File is located at: ${filepath}`
     };
-    
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1960,7 +2125,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
         
       case 'showInFolder':
-        const showResult = await showFileInFolder(request.filepath);
+        const showResult = await showFileInFolder(request.filepath, request.gid);
         sendResponse(showResult);
         break;
         
@@ -2210,7 +2375,7 @@ async function createBackup() {
     fileExtensions: syncData.fileExtensions || null,
     customFileExtensions: syncData.customFileExtensions || null,
     autoResume: syncData.autoResume !== undefined ? syncData.autoResume : true,
-    showNotifications: syncData.showNotifications !== undefined ? syncData.showNotifications : true,
+    showNotifications: syncData.showNotifications !== undefined ? syncData.showNotifications : false,
     interceptionEnabled: syncData.interceptionEnabled !== undefined ? syncData.interceptionEnabled : true
   };
   return backupData;
@@ -2554,13 +2719,15 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     // Remove any path from filename
     finalFilename = finalFilename.split(/[/\\]/).pop();
     
-    // Add to aria2
+    // Add to aria2 — keep Chrome's interrupted download entry so chrome.downloads.show(id)
+    // can open Finder/Explorer when the file lands on the same path Chrome would have used.
     const result = await addDownload(
       downloadInfo.url,
       finalFilename,
       {
         pageUrl: downloadInfo.referrer || downloadInfo.url,
-        pageTitle: 'Browser Download'
+        pageTitle: 'Browser Download',
+        chromeDownloadId: delta.id
       },
       true // User already confirmed name in the browser Save dialog
     );
@@ -2570,13 +2737,9 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     } else {
       console.error('[Aria2 Downloader] ✗ Failed to add to aria2:', result.error);
     }
-    
-    // Erase from Chrome download history
-    chrome.downloads.erase({ id: delta.id }, () => {
-      if (chrome.runtime.lastError) {
-        console.log('[Aria2 Downloader] Could not erase download:', chrome.runtime.lastError.message);
-      }
-    });
+
+    // Do not erase this Chrome download: we need the id for "Show in folder" (see showFileInFolder).
+    // It remains visible in chrome://downloads as interrupted/cancelled while aria2 completes the file.
   }
 });
 

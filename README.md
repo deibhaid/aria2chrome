@@ -120,6 +120,14 @@ _The extension will be published to official stores soon._
 4. Click "Test Connection" to verify the connection
 5. Click "Save Settings"
 
+### Show in Finder / Explorer
+
+For **intercepted** downloads, the extension keeps Chrome’s download entry (so **Show in folder** can use `chrome.downloads.show` like a normal download). You may see a **cancelled/interrupted** row in `chrome://downloads` while aria2 finishes the file — that is expected.
+
+Set the extension **Download Directory** (aria2) to match Chrome’s default download folder (often `~/Downloads`) so the completed file path matches what Chrome expects for **Show in folder**.
+
+If Chrome has no usable download entry for `chrome.downloads.show`, install the **optional native helper** so **Show in folder** can run `open -R` (Finder) / Explorer — see [native/README.md](native/README.md).
+
 ## Usage
 
 ### Basic Usage
