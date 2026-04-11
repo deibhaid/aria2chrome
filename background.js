@@ -1631,129 +1631,130 @@ function isLikelyLocalFilePath(p) {
   return false;
 }
 
-/**
- * Open the parent directory of a local file via file:// tab (Finder / Explorer / etc.).
- * Used for aria2-completed files and restored backups — does not touch the network.
- */
-async function openLocalDirectoryForFilePath(filepath) {
-  try {
-    const parts = filepath.split(/[/\\]/);
-    if (parts.length < 2) return false;
-    parts.pop();
-    const directory = parts.join('/');
-    if (!directory) return false;
-
-    let fileUrl;
-    if (directory.startsWith('/') || directory.startsWith('//')) {
-      fileUrl = 'file://' + directory;
-    } else if (/^[A-Za-z]:/.test(directory)) {
-      fileUrl = 'file:///' + directory.replace(/\\/g, '/');
-    } else {
-      return false;
-    }
-
-    await chrome.tabs.create({ url: fileUrl, active: false });
-    setTimeout(async () => {
-      try {
-        const tabs = await chrome.tabs.query({ url: fileUrl });
-        tabs.forEach((tab) => chrome.tabs.remove(tab.id));
-      } catch (e) {
-        // ignore
-      }
-    }, 1000);
-    return true;
-  } catch (e) {
-    console.log('[Aria2 Downloader] openLocalDirectoryForFilePath failed:', e);
-    return false;
+/** Chrome uses the OS file manager for downloads.show — must use callback to clear lastError. */
+function downloadsShowSafe(downloadId) {
+  const id =
+    typeof downloadId === 'number'
+      ? downloadId
+      : parseInt(String(downloadId), 10);
+  if (Number.isNaN(id)) {
+    return Promise.resolve({ ok: false, error: 'Invalid download id' });
   }
+  return new Promise((resolve) => {
+    chrome.downloads.show(id, () => {
+      const err = chrome.runtime.lastError;
+      resolve({ ok: !err, error: err ? err.message : null });
+    });
+  });
 }
 
-// Show file in folder (cross-platform: macOS Finder, Windows Explorer, Linux file managers)
+/** Optional native host (see native/README.md): Finder / Explorer when Chrome has no valid download id. */
+function revealViaNativeHost(filepath) {
+  if (typeof chrome.runtime.sendNativeMessage !== 'function') {
+    return Promise.resolve({ ok: false, error: 'Native messaging not available' });
+  }
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendNativeMessage(
+        'com.deibhaid.aria2chrome.reveal',
+        { path: filepath },
+        (response) => {
+          const err = chrome.runtime.lastError;
+          if (err) {
+            resolve({ ok: false, error: err.message });
+            return;
+          }
+          if (response && response.ok === false) {
+            resolve({ ok: false, error: response.error || 'Native host failed' });
+            return;
+          }
+          resolve({ ok: true });
+        }
+      );
+    } catch (e) {
+      resolve({ ok: false, error: e.message });
+    }
+  });
+}
+
+// Show file in folder (Chrome uses OS Finder/Explorer via downloads.show when id is valid)
 async function showFileInFolder(filepath) {
   try {
-    // Find the download with this filepath
-    const download = Object.values(downloads).find(d => d.filePath === filepath);
-    
+    const download = Object.values(downloads).find((d) => d.filePath === filepath);
+
     if (!download) {
       return { success: false, error: 'Download not found' };
     }
 
-    // First: restored backup / aria2 paths are local — open folder without using Chrome
-    // download history or re-fetching download.url (that would trigger Save / re-download).
-    if (filepath && isLikelyLocalFilePath(filepath)) {
-      const opened = await openLocalDirectoryForFilePath(filepath);
-      if (opened) {
+    // 1) Saved Chrome download id — same behavior as Chrome's "Show in folder"
+    if (download.chromeDownloadId != null && download.chromeDownloadId !== '') {
+      const r1 = await downloadsShowSafe(download.chromeDownloadId);
+      if (r1.ok) {
         return { success: true };
       }
-    }
-    
-    // Method 1: Try using saved Chrome download ID
-    if (download.chromeDownloadId) {
-      try {
-        chrome.downloads.show(download.chromeDownloadId);
-        if (chrome.runtime.lastError) {
-          console.log('[Aria2 Downloader] downloads.show (saved id):', chrome.runtime.lastError.message);
-        } else {
-          return { success: true };
-        }
-      } catch (e) {
-        console.log('Chrome download ID invalid, trying other methods...', e);
+      logInfo('downloads.show (saved id) failed', { error: r1.error });
+      if (r1.error && String(r1.error).includes('Invalid downloadId')) {
+        delete download.chromeDownloadId;
+        await saveDownloads();
       }
     }
-    
-    // Method 2: Search Chrome downloads history
+
+    // 2) Match Chrome's download history (filename) — may recover id after extension reload
     const filename = download.filename;
     if (filename) {
       try {
-        // Search Chrome downloads for this file
-        const chromeDownloads = await chrome.downloads.search({ 
-          filenameRegex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), // Escape special chars
+        const chromeDownloads = await chrome.downloads.search({
+          filenameRegex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
           exists: true,
           limit: 20,
           orderBy: ['-startTime']
         });
-        
-        // Try to find exact match
-        let matchingDownload = chromeDownloads.find(d => 
-          d.filename && d.filename.endsWith(filename)
+
+        let matchingDownload = chromeDownloads.find(
+          (d) => d.filename && d.filename.endsWith(filename)
         );
-        
-        // If exact match not found, try partial match
         if (!matchingDownload && chromeDownloads.length > 0) {
-          matchingDownload = chromeDownloads.find(d => 
-            d.filename && d.filename.toLowerCase().includes(filename.toLowerCase())
+          matchingDownload = chromeDownloads.find(
+            (d) =>
+              d.filename && d.filename.toLowerCase().includes(filename.toLowerCase())
           );
         }
-        
+
         if (matchingDownload) {
-          chrome.downloads.show(matchingDownload.id);
-          if (chrome.runtime.lastError) {
-            console.log('[Aria2 Downloader] downloads.show (search):', chrome.runtime.lastError.message);
-          } else {
+          const r2 = await downloadsShowSafe(matchingDownload.id);
+          if (r2.ok) {
             download.chromeDownloadId = matchingDownload.id;
             await saveDownloads();
             return { success: true };
           }
+          logInfo('downloads.show (search) failed', { error: r2.error });
         }
       } catch (e) {
         console.log('Chrome downloads search failed:', e);
       }
     }
-    
-    // Final fallback: Show notification with file path
+
+    // 3) Restored backup / aria2-only: optional native host (open -R / explorer /select)
+    if (filepath && isLikelyLocalFilePath(filepath)) {
+      const r3 = await revealViaNativeHost(filepath);
+      if (r3.ok) {
+        return { success: true };
+      }
+      logInfo('Native reveal not available or failed', { error: r3.error });
+    }
+
     createNotification({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
-      title: 'File Location',
-      message: `File saved at:\n${filepath}\n\nPlease open this location manually.`,
+      title: 'File location',
+      message: `Saved at:\n${filepath}\n\nOptional: install the native helper (see native/README.md) to open Finder/Explorer for restored items.`,
       isClickable: true
     });
-    
-    return { 
-      success: false, 
-      error: `File is located at: ${filepath}` 
+
+    return {
+      success: false,
+      error: `File is located at: ${filepath}`
     };
-    
   } catch (error) {
     return { success: false, error: error.message };
   }

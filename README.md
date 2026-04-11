@@ -120,6 +120,10 @@ _The extension will be published to official stores soon._
 4. Click "Test Connection" to verify the connection
 5. Click "Save Settings"
 
+### Optional: Show in Finder / Explorer (restored backups)
+
+Chrome’s **Show in folder** uses the real system file manager when the browser still has a **download id**. After you reinstall the extension or restore `download.json`, those ids are often missing, so Chrome cannot reveal the file by itself. You can install a **small optional native helper** so **Show in folder** still opens Finder (macOS) or Explorer (Windows) with the file selected. See [native/README.md](native/README.md).
+
 ## Usage
 
 ### Basic Usage

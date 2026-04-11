@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Aria2Chrome",
-  "version": "1.1.15",
+  "version": "1.1.16",
   "description": "Download manager using aria2c with automatic resume, smart retry, and accurate progress tracking",
   "permissions": [
     "storage",
@@ -9,7 +9,8 @@
     "notifications",
     "activeTab",
     "contextMenus",
-    "cookies"
+    "cookies",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "<all_urls>"
