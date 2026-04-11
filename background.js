@@ -1650,16 +1650,6 @@ function downloadsShowSafe(downloadId) {
   });
 }
 
-/** Opens Chrome's default download directory in the OS file manager (often ~/Downloads). */
-function showDefaultFolderSafe() {
-  return new Promise((resolve) => {
-    chrome.downloads.showDefaultFolder(() => {
-      const err = chrome.runtime.lastError;
-      resolve({ ok: !err, error: err ? err.message : null });
-    });
-  });
-}
-
 /** Optional native host (see native/README.md): Finder / Explorer when Chrome has no valid download id. */
 function revealViaNativeHost(filepath) {
   if (typeof chrome.runtime.sendNativeMessage !== 'function') {
@@ -1700,14 +1690,29 @@ async function showFileInFolder(filepath) {
 
     // 1) Saved Chrome download id — same behavior as Chrome's "Show in folder"
     if (download.chromeDownloadId != null && download.chromeDownloadId !== '') {
-      const r1 = await downloadsShowSafe(download.chromeDownloadId);
-      if (r1.ok) {
-        return { success: true };
+      const sid = parseInt(String(download.chromeDownloadId), 10);
+      if (!Number.isNaN(sid)) {
+        try {
+          const stillThere = await chrome.downloads.search({ id: sid, limit: 1 });
+          if (!stillThere.length) {
+            delete download.chromeDownloadId;
+            await saveDownloads();
+            logInfo('Stale chromeDownloadId removed (not in Chrome history)', { sid });
+          }
+        } catch (e) {
+          console.log('[Aria2 Downloader] downloads.search by id failed:', e);
+        }
       }
-      logInfo('downloads.show (saved id) failed', { error: r1.error });
-      if (r1.error && String(r1.error).includes('Invalid downloadId')) {
-        delete download.chromeDownloadId;
-        await saveDownloads();
+      if (download.chromeDownloadId != null && download.chromeDownloadId !== '') {
+        const r1 = await downloadsShowSafe(download.chromeDownloadId);
+        if (r1.ok) {
+          return { success: true };
+        }
+        logInfo('downloads.show (saved id) failed', { error: r1.error });
+        if (r1.error && String(r1.error).includes('Invalid downloadId')) {
+          delete download.chromeDownloadId;
+          await saveDownloads();
+        }
       }
     }
 
@@ -1727,9 +1732,9 @@ async function showFileInFolder(filepath) {
       if (!name) continue;
       try {
         const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Do not use exists:true — intercepted rows stay "interrupted" in Chrome; aria2 owns the file.
         const chromeDownloads = await chrome.downloads.search({
           filenameRegex: escaped,
-          exists: true,
           limit: 20,
           orderBy: ['-startTime']
         });
@@ -1758,6 +1763,33 @@ async function showFileInFolder(filepath) {
       }
     }
 
+    // 2b) Match Chrome history by download URL (interrupted/cancelled rows keep the original URL)
+    if (download.url && /^https?:/i.test(download.url)) {
+      try {
+        const urlEsc = download.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const byUrl = await chrome.downloads.search({
+          urlRegex: urlEsc,
+          limit: 40,
+          orderBy: ['-startTime']
+        });
+        const wantBase = basename(filepath);
+        for (const d of byUrl) {
+          const dBase = d.filename ? basename(d.filename) : '';
+          if (wantBase && dBase && dBase === wantBase) {
+            const rUrl = await downloadsShowSafe(d.id);
+            if (rUrl.ok) {
+              download.chromeDownloadId = d.id;
+              await saveDownloads();
+              return { success: true };
+            }
+            logInfo('downloads.show (url search) failed', { error: rUrl.error });
+          }
+        }
+      } catch (e) {
+        console.log('[Aria2 Downloader] Chrome URL search failed:', e);
+      }
+    }
+
     // 3) Optional native host (open -R / explorer /select) — e.g. restored backup without Chrome id
     if (filepath && isLikelyLocalFilePath(filepath)) {
       const r3 = await revealViaNativeHost(filepath);
@@ -1766,14 +1798,6 @@ async function showFileInFolder(filepath) {
       }
       logInfo('Native reveal not available or failed', { error: r3.error });
     }
-
-    // 4) Last resort: Chrome's default download folder in the OS file manager (often same as aria2 dir)
-    const r4 = await showDefaultFolderSafe();
-    if (r4.ok) {
-      logInfo('showFileInFolder: opened default download folder (no Chrome download id for this item)');
-      return { success: true, openedDefaultDownloadFolder: true };
-    }
-    logInfo('showDefaultFolder failed', { error: r4.error });
 
     createNotification({
       type: 'basic',

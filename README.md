@@ -126,7 +126,7 @@ For **intercepted** downloads, the extension keeps Chrome’s download entry (so
 
 Set the extension **Download Directory** (aria2) to match Chrome’s default download folder (often `~/Downloads`) so the completed file path matches what Chrome expects for **Show in folder**.
 
-If Chrome has no matching entry (e.g. restored backup), the extension tries an **optional native helper**, then opens Chrome’s **default download folder** in the file manager. See [native/README.md](native/README.md) for the helper.
+If Chrome has no matching entry (e.g. restored backup), install the **optional native helper** — see [native/README.md](native/README.md).
 
 ## Usage
 
