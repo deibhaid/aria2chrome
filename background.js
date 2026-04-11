@@ -1719,12 +1719,22 @@ function revealViaNativeHost(filepath) {
 }
 
 // Show file in folder (Chrome uses OS Finder/Explorer via downloads.show when id is valid)
-async function showFileInFolder(filepath) {
+// Prefer `gid`: never trust filepath from the popup DOM (HTML data-* can mangle &, ", <, etc.).
+async function showFileInFolder(filepath, gid) {
   try {
-    const download = Object.values(downloads).find((d) => d.filePath === filepath);
-
+    let download = null;
+    if (gid != null && gid !== '' && downloads[gid]) {
+      download = downloads[gid];
+    }
+    if (!download && filepath) {
+      download = Object.values(downloads).find((d) => d.filePath === filepath);
+    }
     if (!download) {
       return { success: false, error: 'Download not found' };
+    }
+    filepath = download.filePath;
+    if (!filepath) {
+      return { success: false, error: 'File path not available' };
     }
 
     // 1) Saved Chrome download id — same behavior as Chrome's "Show in folder"
@@ -2078,7 +2088,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
         
       case 'showInFolder':
-        const showResult = await showFileInFolder(request.filepath);
+        const showResult = await showFileInFolder(request.filepath, request.gid);
         sendResponse(showResult);
         break;
         

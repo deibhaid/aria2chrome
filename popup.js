@@ -128,7 +128,7 @@ function renderDownloads() {
               download.status === 'active' || download.status === 'waiting' ? 
               `<button class="control-btn" data-action="pause" data-gid="${download.gid}" title="Pause">⏸️</button>` : 
               download.status === 'complete' ?
-              `<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" data-filepath="${download.filePath || ''}" title="Show in Folder">📁</button>` :
+              `<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" title="Show in Folder">📁</button>` :
               download.status === 'queued' ?
               `<button class="control-btn" data-action="startQueued" data-gid="${download.gid || download.queueId}" title="Start Now">▶️</button>` :
               `<button class="control-btn" data-action="resume" data-gid="${download.gid}" title="${download.status === 'failed_permanently' ? 'Retry (Reset Attempts)' : 'Resume'}">▶️</button>`
@@ -177,8 +177,7 @@ function renderDownloads() {
 function handleControlClick(event) {
   const action = event.currentTarget.dataset.action;
   const gid = event.currentTarget.dataset.gid;
-  const filepath = event.currentTarget.dataset.filepath;
-  
+
   switch (action) {
     case 'pause':
       pauseDownload(gid);
@@ -196,7 +195,7 @@ function handleControlClick(event) {
       confirmDownload(gid);
       break;
     case 'showInFolder':
-      showInFolder(gid, filepath);
+      showInFolder(gid);
       break;
   }
 }
@@ -314,23 +313,21 @@ function removeDownload(gid) {
   });
 }
 
-// Show file in folder
-function showInFolder(gid, filepath) {
-  if (!filepath) {
-    // If no filepath, try to get it from downloads
-    const download = downloads[gid];
-    filepath = download?.filePath;
+// Show file in folder — path is resolved in the background from `gid` (avoid HTML data-* mangling paths).
+function showInFolder(gid) {
+  if (!gid) {
+    alert('Download id missing.');
+    return;
   }
-  
-  if (!filepath) {
+  const local = downloads[gid];
+  if (!local?.filePath) {
     alert('File path not available. The file location is unknown.');
     return;
   }
-  
+
   chrome.runtime.sendMessage({
     action: 'showInFolder',
-    gid: gid,
-    filepath: filepath
+    gid: gid
   }, response => {
     if (response && !response.success) {
       alert('Could not open file location: ' + (response.error || 'Unknown error'));
