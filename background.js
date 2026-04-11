@@ -1876,89 +1876,6 @@ async function restartDownloadAfterRename(download) {
   }
 }
 
-async function renameDownload(gid, newFilename) {
-  try {
-    if (!newFilename || !newFilename.trim()) {
-      return { success: false, error: 'Filename cannot be empty' };
-    }
-    const download = downloads[gid];
-    if (!download) {
-      return { success: false, error: 'Download not found' };
-    }
-    
-    const sanitizedName = newFilename.trim();
-    const previousName = download.filename;
-    
-    if (previousName === sanitizedName) {
-      return { success: true, unchanged: true };
-    }
-    
-    download.filename = sanitizedName;
-    if (previousName) {
-      download.previousFilenames = Array.isArray(download.previousFilenames) 
-        ? [...download.previousFilenames, previousName] 
-        : [previousName];
-    }
-    
-    let requiresRestart = false;
-    let hadProgress = false;
-    
-    if (download.status === 'complete' && download.filePath) {
-      try {
-        const oldPath = download.filePath;
-        const pathParts = oldPath.split(/[/\\]/);
-        pathParts.pop();
-        const directory = pathParts.join('/');
-        const newPath = directory ? `${directory}/${sanitizedName}` : sanitizedName;
-        await chrome.runtime.sendNativeMessage('aria2chrome.renamer', {
-          oldPath,
-          newPath
-        });
-        download.filePath = newPath;
-      } catch (error) {
-        console.warn('[Aria2 Downloader] Native rename unavailable or failed:', error);
-      }
-    } else if (download.status === 'queued') {
-      const queueEntry = downloadQueue.find(entry => entry.queueId === download.queueId);
-      if (queueEntry) {
-        queueEntry.filename = sanitizedName;
-      }
-    } else if (download.status !== 'removed') {
-      requiresRestart = true;
-      const completedBytes = parseInt(download.completedLength || '0', 10);
-      hadProgress = !isNaN(completedBytes) && completedBytes > 0;
-      const wasActiveOrWaiting = download.status === 'active' || download.status === 'waiting';
-      download.renameRequiresRestart = true;
-      download.renameRequestedAt = Date.now();
-      download.pendingRenameFrom = previousName;
-      download.status = 'paused';
-      download.downloadSpeed = '0';
-      
-      if (download.gid && wasActiveOrWaiting) {
-        try {
-          await aria2RPC('aria2.forcePause', [download.gid]);
-        } catch (error) {
-          // Ignore - download might already be paused/removed
-        }
-      }
-    }
-    
-    logInfo('Rename requested', {
-      gid,
-      oldName: previousName,
-      newName: sanitizedName,
-      requiresRestart,
-      hadProgress
-    });
-    
-    await saveDownloads();
-    
-    return { success: true, requiresRestart, hadProgress };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
-}
-
 // Message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   (async () => {
@@ -1990,24 +1907,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       case 'updateDownloadUrl':
         const updateResult = await updateDownloadUrl(request.gid, request.newUrl);
         sendResponse(updateResult);
-        break;
-      case 'renameDownload':
-        // Renaming only allowed for complete downloads or awaiting_confirmation
-        const downloadToRename = downloads[request.gid];
-        if (!downloadToRename) {
-          sendResponse({ success: false, error: 'Download not found' });
-        } else if (downloadToRename.status === 'complete') {
-          // Allow renaming completed downloads (native messaging host can handle on-disk rename)
-          const renameResult = await renameDownload(request.gid, request.filename);
-          sendResponse(renameResult);
-        } else if (downloadToRename.status === 'awaiting_confirmation') {
-          // Allow confirming filename before download starts
-          downloadToRename.filename = request.filename.trim();
-          await saveDownloads();
-          sendResponse({ success: true, confirmation: true });
-        } else {
-          sendResponse({ success: false, error: 'Cannot rename downloads in progress. Delete and re-add instead.' });
-        }
         break;
         
       case 'confirmDownload':
