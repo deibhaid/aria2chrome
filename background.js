@@ -1650,6 +1650,45 @@ function downloadsShowSafe(downloadId) {
   });
 }
 
+/** Last path segment for comparison (encoding / apostrophe variants). */
+function normalizeBasenameForMatch(p) {
+  if (!p || typeof p !== 'string') return '';
+  const base = p.split(/[/\\]/).filter(Boolean).pop() || '';
+  return base
+    .normalize('NFC')
+    .replace(/\u2019/g, "'")
+    .replace(/\u2018/g, "'")
+    .trim();
+}
+
+/**
+ * Chrome may store the same resource as a slightly different URL string (encoding of spaces, quotes, etc.).
+ * Compare origin + decoded path (+ search) so we still find the interrupted download row.
+ */
+function safeDecodePathSegment(path) {
+  try {
+    return decodeURIComponent(path.replace(/\+/g, '%20'));
+  } catch {
+    return path;
+  }
+}
+
+function urlsEqualForChromeHistory(a, b) {
+  if (!a || !b) return false;
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    if (ua.origin !== ub.origin) return false;
+    const pa = safeDecodePathSegment(ua.pathname);
+    const pb = safeDecodePathSegment(ub.pathname);
+    if (pa !== pb) return false;
+    if (ua.search !== ub.search) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Optional native host (see native/README.md): Finder / Explorer when Chrome has no valid download id. */
 function revealViaNativeHost(filepath) {
   if (typeof chrome.runtime.sendNativeMessage !== 'function') {
@@ -1722,6 +1761,7 @@ async function showFileInFolder(filepath) {
         .split(/[/\\]/)
         .filter(Boolean)
         .pop() || '';
+    const wantNorm = normalizeBasenameForMatch(filepath);
     const filename = download.filename;
     const namesToTry = [];
     if (filename) namesToTry.push(filename);
@@ -1740,7 +1780,9 @@ async function showFileInFolder(filepath) {
         });
 
         let matchingDownload = chromeDownloads.find(
-          (d) => d.filename && d.filename.endsWith(name)
+          (d) =>
+            d.filename &&
+            normalizeBasenameForMatch(d.filename) === normalizeBasenameForMatch(name)
         );
         if (!matchingDownload && chromeDownloads.length > 0) {
           matchingDownload = chromeDownloads.find(
@@ -1763,27 +1805,57 @@ async function showFileInFolder(filepath) {
       }
     }
 
-    // 2b) Match Chrome history by download URL (interrupted/cancelled rows keep the original URL)
+    // 2b) Match Chrome history by URL + basename (encoding of spaces/quotes often differs from our stored url)
     if (download.url && /^https?:/i.test(download.url)) {
       try {
+        let host = '';
+        try {
+          host = new URL(download.url).hostname;
+        } catch (e) {
+          host = '';
+        }
+        const narrow = host
+          ? await chrome.downloads.search({
+              query: [host],
+              limit: 120,
+              orderBy: ['-startTime']
+            })
+          : await chrome.downloads.search({ limit: 120, orderBy: ['-startTime'] });
+
         const urlEsc = download.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const byUrl = await chrome.downloads.search({
-          urlRegex: urlEsc,
-          limit: 40,
-          orderBy: ['-startTime']
-        });
-        const wantBase = basename(filepath);
-        for (const d of byUrl) {
-          const dBase = d.filename ? basename(d.filename) : '';
-          if (wantBase && dBase && dBase === wantBase) {
-            const rUrl = await downloadsShowSafe(d.id);
-            if (rUrl.ok) {
-              download.chromeDownloadId = d.id;
-              await saveDownloads();
-              return { success: true };
-            }
-            logInfo('downloads.show (url search) failed', { error: rUrl.error });
+        let byUrl = [];
+        try {
+          byUrl = await chrome.downloads.search({
+            urlRegex: urlEsc,
+            limit: 40,
+            orderBy: ['-startTime']
+          });
+        } catch (e) {
+          logInfo('urlRegex search skipped', { error: String(e) });
+        }
+
+        const merged = [];
+        const seen = new Set();
+        for (const d of [...byUrl, ...narrow]) {
+          if (d && seen.has(d.id)) continue;
+          if (d) {
+            seen.add(d.id);
+            merged.push(d);
           }
+        }
+
+        for (const d of merged) {
+          if (!d.url) continue;
+          const dBase = d.filename ? normalizeBasenameForMatch(d.filename) : '';
+          if (!wantNorm || !dBase || dBase !== wantNorm) continue;
+          if (!urlsEqualForChromeHistory(d.url, download.url)) continue;
+          const rUrl = await downloadsShowSafe(d.id);
+          if (rUrl.ok) {
+            download.chromeDownloadId = d.id;
+            await saveDownloads();
+            return { success: true };
+          }
+          logInfo('downloads.show (url+basename) failed', { error: rUrl.error });
         }
       } catch (e) {
         console.log('[Aria2 Downloader] Chrome URL search failed:', e);
