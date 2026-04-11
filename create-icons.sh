@@ -2,6 +2,11 @@
 
 # Create Chrome extension icons from source image
 # Prefers rocket.png if available, otherwise creates a simple SVG placeholder
+#
+# Writes:
+#   icon{16,48,128}.png — used by the extension (manifest, notifications, etc.)
+#   chrome-web-store-icon{16,48,128}.png — square listing assets for Chrome Web
+#   Store (only when source is PNG; non-square sources need crop + extent)
 
 cd "$(dirname "$0")/icons"
 
@@ -47,14 +52,18 @@ if [ "$SOURCE_IMAGE" = "icon.svg" ]; then
         exit 1
     fi
 else
-    # Use ImageMagick for PNG source (non-square → square via center crop).
-    # Plain -resize WxH preserves aspect ratio, which breaks Chrome/Web Store
-    # (e.g. 548×864 → 81×128). ^ = fill the box, then -extent crops to square.
+    # Use ImageMagick for PNG source — extension icons (preserve aspect ratio)
     if command -v magick &> /dev/null; then
-        magick "$SOURCE_IMAGE" -resize 128x128^ -gravity center -extent 128x128 -quality 100 icon128.png
-        magick "$SOURCE_IMAGE" -resize 48x48^ -gravity center -extent 48x48 -quality 100 icon48.png
-        magick "$SOURCE_IMAGE" -resize 16x16^ -gravity center -extent 16x16 -quality 100 icon16.png
-        echo "✅ Icons created successfully from rocket.png"
+        magick "$SOURCE_IMAGE" -resize 128x128 -quality 100 icon128.png
+        magick "$SOURCE_IMAGE" -resize 48x48 -quality 100 icon48.png
+        magick "$SOURCE_IMAGE" -resize 16x16 -quality 100 icon16.png
+        echo "✅ Extension icons created from rocket.png"
+
+        # Square crops for Chrome Web Store listing (non-square sources → ^ + extent)
+        magick "$SOURCE_IMAGE" -resize 128x128^ -gravity center -extent 128x128 -quality 100 chrome-web-store-icon128.png
+        magick "$SOURCE_IMAGE" -resize 48x48^ -gravity center -extent 48x48 -quality 100 chrome-web-store-icon48.png
+        magick "$SOURCE_IMAGE" -resize 16x16^ -gravity center -extent 16x16 -quality 100 chrome-web-store-icon16.png
+        echo "✅ Chrome Web Store listing icons: chrome-web-store-icon{16,48,128}.png"
     else
         echo "❌ ImageMagick not found. Please install it: brew install imagemagick"
         exit 1
@@ -62,4 +71,7 @@ else
 fi
 
 echo ""
-ls -lh icon*.png
+ls -lh icon16.png icon48.png icon128.png
+if [ -f chrome-web-store-icon16.png ]; then
+    ls -lh chrome-web-store-icon16.png chrome-web-store-icon48.png chrome-web-store-icon128.png
+fi
