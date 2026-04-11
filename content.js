@@ -27,6 +27,36 @@ function mergeCustomExtensions(base, custom) {
   return out;
 }
 
+function isExtensionRuntimeValid() {
+  try {
+    return !!(typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id);
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Send message to background; handles lastError / invalidated extension context (e.g. after reload). */
+function sendToBackground(message, callback) {
+  if (!isExtensionRuntimeValid()) {
+    if (callback) callback(null);
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(message, (response) => {
+      const err = chrome.runtime.lastError;
+      if (err) {
+        console.warn('[Aria2 Downloader] sendMessage:', err.message);
+        if (callback) callback(null);
+        return;
+      }
+      if (callback) callback(response);
+    });
+  } catch (e) {
+    console.warn('[Aria2 Downloader] sendMessage threw:', e);
+    if (callback) callback(null);
+  }
+}
+
 // Load custom extensions and interception state from storage
 chrome.storage.sync.get(['fileExtensions', 'customFileExtensions', 'interceptionEnabled'], function(result) {
   if (result.fileExtensions && result.fileExtensions.length > 0) {
@@ -316,7 +346,7 @@ document.addEventListener('click', function(event) {
             const selectedFilename = file.name;
             
             // Send to background with skipConfirmation = true
-            chrome.runtime.sendMessage({
+            sendToBackground({
               action: 'captureVideo',
               url: href,
               filename: selectedFilename,
@@ -324,6 +354,10 @@ document.addEventListener('click', function(event) {
               pageTitle: document.title,
               skipConfirmation: true
             }, function(response) {
+              if (response == null) {
+                showNotification('Aria2Chrome', 'Extension was updated — refresh this page to continue.');
+                return;
+              }
               if (response && response.success) {
                 if (!response.duplicate && !response.awaiting_confirmation) {
                   showNotification('Download started', `${selectedFilename} added to aria2`);
@@ -342,8 +376,13 @@ document.addEventListener('click', function(event) {
               showNotification('Cancelled', 'Download cancelled');
               return;
             }
+            const msg = String(error && error.message ? error.message : error);
+            if (msg.includes('Extension context invalidated')) {
+              showNotification('Aria2Chrome', 'Extension was updated — refresh this page to continue.');
+              return;
+            }
             console.error('[Aria2 Downloader] File picker error:', error);
-            showNotification('Error', 'Failed to open file picker: ' + error.message);
+            showNotification('Error', 'Failed to open file picker: ' + msg);
           }
         })();
       } else {
@@ -354,8 +393,7 @@ document.addEventListener('click', function(event) {
           return;
         }
         
-        // Send message to background script
-        chrome.runtime.sendMessage({
+        sendToBackground({
           action: 'captureVideo',
           url: href,
           filename: confirmedName.trim(),
@@ -363,6 +401,10 @@ document.addEventListener('click', function(event) {
           pageTitle: document.title,
           skipConfirmation: true
         }, function(response) {
+          if (response == null) {
+            showNotification('Aria2Chrome', 'Extension was updated — refresh this page to continue.');
+            return;
+          }
           if (response && response.success) {
             if (!response.duplicate && !response.awaiting_confirmation) {
               showNotification('Download added', `${confirmedName.trim()} added to aria2 queue`);
@@ -420,7 +462,7 @@ document.addEventListener('click', function(event) {
       
       const filename = getFilenameFromUrl(videoUrl, '', '');
       
-      chrome.runtime.sendMessage({
+      sendToBackground({
         action: 'captureVideo',
         url: videoUrl,
         filename: filename,
@@ -469,7 +511,7 @@ document.addEventListener('contextmenu', function(event) {
     
     if (url && isVideoUrl(url, downloadAttr, linkText)) {
       // Store the URL for context menu action
-      chrome.runtime.sendMessage({
+      sendToBackground({
         action: 'storeContextUrl',
         url: url,
         filename: getFilenameFromUrl(url, downloadAttr, linkText)
@@ -566,17 +608,11 @@ function collectDirectoryFilesFromIndex() {
 }
 
 function notifyDirectoryListingStatus(hasListing, fileCount = 0) {
-  try {
-    if (chrome?.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({
-        action: 'directoryListingStatus',
-        hasListing,
-        fileCount
-      });
-    }
-  } catch (e) {
-    // Ignore messaging errors (e.g., extension reloading)
-  }
+  sendToBackground({
+    action: 'directoryListingStatus',
+    hasListing,
+    fileCount
+  });
 }
 
 function processDirectoryDownloadAllRequest(triggerSource = 'context-menu', callback) {
@@ -590,7 +626,7 @@ function processDirectoryDownloadAllRequest(triggerSource = 'context-menu', call
   
   showNotification('Aria2Chrome', `Sending ${files.length} file(s) to aria2...`);
   
-  chrome.runtime.sendMessage({
+  sendToBackground({
     action: 'downloadMultiple',
     downloads: files.map(file => ({
       url: file.url,
@@ -600,6 +636,11 @@ function processDirectoryDownloadAllRequest(triggerSource = 'context-menu', call
       source: triggerSource
     }))
   }, response => {
+    if (response == null) {
+      showNotification('Aria2Chrome', 'Extension was updated — refresh this page to continue.');
+      callback?.({ success: false, error: 'Extension context invalidated' });
+      return;
+    }
     if (!response || response.error) {
       const errorMsg = response?.error || 'Unknown error';
       showNotification('Aria2Chrome', `Download-all failed: ${errorMsg}`);

@@ -1634,11 +1634,14 @@ async function showFileInFolder(filepath) {
     // Method 1: Try using saved Chrome download ID
     if (download.chromeDownloadId) {
       try {
-        // This works cross-platform (macOS Finder, Windows Explorer, Linux Nautilus/Dolphin)
         chrome.downloads.show(download.chromeDownloadId);
-        return { success: true };
+        if (chrome.runtime.lastError) {
+          console.log('[Aria2 Downloader] downloads.show (saved id):', chrome.runtime.lastError.message);
+        } else {
+          return { success: true };
+        }
       } catch (e) {
-        console.log('Chrome download ID invalid, trying other methods...');
+        console.log('Chrome download ID invalid, trying other methods...', e);
       }
     }
     
@@ -1668,10 +1671,13 @@ async function showFileInFolder(filepath) {
         
         if (matchingDownload) {
           chrome.downloads.show(matchingDownload.id);
-          // Save the chrome download ID for future use
-          download.chromeDownloadId = matchingDownload.id;
-          await saveDownloads();
-          return { success: true };
+          if (chrome.runtime.lastError) {
+            console.log('[Aria2 Downloader] downloads.show (search):', chrome.runtime.lastError.message);
+          } else {
+            download.chromeDownloadId = matchingDownload.id;
+            await saveDownloads();
+            return { success: true };
+          }
         }
       } catch (e) {
         console.log('Chrome downloads search failed:', e);
@@ -1706,17 +1712,17 @@ async function showFileInFolder(filepath) {
         // Wait a moment for download to register
         await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Cancel the download (we don't want to re-download)
+        // Show BEFORE cancel — cancel() invalidates the download id for show()
+        chrome.downloads.show(downloadId);
+        const showFailed = chrome.runtime.lastError;
+        if (showFailed) {
+          console.log('[Aria2 Downloader] downloads.show (fake download):', showFailed.message);
+        }
+        
         await chrome.downloads.cancel(downloadId);
         
-        // Now try to show it
-        chrome.downloads.show(downloadId);
-        
-        // Save this ID
-        download.chromeDownloadId = downloadId;
-        await saveDownloads();
-        
-        return { success: true };
+        // Do not save chromeDownloadId — cancelled ids are invalid for future show()
+        return { success: !showFailed };
       } catch (e) {
         console.log('Failed to create fake download:', e);
       }
