@@ -33,6 +33,40 @@ const LOG_STORAGE_KEY = 'aria2Logs';
 const MAX_LOG_ENTRIES = 500;
 let logBuffer = null;
 
+// onDeterminingFilename must use the same extension set as the options page (sync).
+// Default matches options.js when the user has never saved: video only.
+const DEFAULT_INTERCEPT_EXTENSIONS = [
+  '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
+  '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb', '.divx', '.xvid', '.m2ts', '.mts', '.asf'
+];
+let cachedInterceptExtensions = [...DEFAULT_INTERCEPT_EXTENSIONS];
+
+async function refreshInterceptExtensionsCache() {
+  try {
+    const result = await chrome.storage.sync.get(['fileExtensions', 'customFileExtensions']);
+    const base =
+      result.fileExtensions && result.fileExtensions.length > 0
+        ? result.fileExtensions
+        : DEFAULT_INTERCEPT_EXTENSIONS;
+    const custom = Array.isArray(result.customFileExtensions) ? result.customFileExtensions : [];
+    const merged = [...base];
+    const seen = new Set(base.map((e) => (e || '').toLowerCase()));
+    custom.forEach((e) => {
+      const raw = (e || '').trim();
+      if (!raw) return;
+      const withDot = raw.startsWith('.') ? raw : `.${raw}`;
+      const low = withDot.toLowerCase();
+      if (!seen.has(low)) {
+        seen.add(low);
+        merged.push(withDot);
+      }
+    });
+    cachedInterceptExtensions = merged;
+  } catch (e) {
+    console.warn('[Aria2 Downloader] refreshInterceptExtensionsCache failed:', e);
+  }
+}
+
 // Forced ignore list - these downloads are NEVER intercepted
 const FORCED_IGNORE_LIST = {
   urlPatterns: [
@@ -417,7 +451,16 @@ async function loadConfig() {
   
   // Update badge based on interception state
   updateBadgeColor();
+
+  await refreshInterceptExtensionsCache();
 }
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync') return;
+  if (changes.fileExtensions || changes.customFileExtensions) {
+    refreshInterceptExtensionsCache();
+  }
+});
 
 // Save configuration to storage
 async function saveConfig() {
@@ -2534,12 +2577,7 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       // If URL parsing fails, use the full URL
     }
     
-    // Default extensions
-    const extensions = [
-      '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg',
-      '.3gp', '.ogv', '.ts', '.m3u8', '.f4v', '.vob', '.rm', '.rmvb',
-      '.rar', '.zip', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso', '.dmg'
-    ];
+    const extensions = cachedInterceptExtensions;
     
     const matchesExtension = extensions.some(ext => {
       const extLower = ext.toLowerCase();

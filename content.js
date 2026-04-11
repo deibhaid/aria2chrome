@@ -12,11 +12,30 @@ let FILE_EXTENSIONS = [
   '.tgz', '.tbz2', '.txz', '.z', '.lz', '.lzma', '.cab', '.iso', '.dmg'
 ];
 
+function mergeCustomExtensions(base, custom) {
+  const set = new Set(base.map((e) => e.toLowerCase()));
+  const out = base.slice();
+  (custom || []).forEach((e) => {
+    const ext = (e || '').trim();
+    if (!ext) return;
+    const low = ext.toLowerCase();
+    if (!set.has(low)) {
+      set.add(low);
+      out.push(ext.startsWith('.') ? ext : `.${ext}`);
+    }
+  });
+  return out;
+}
+
 // Load custom extensions and interception state from storage
-chrome.storage.sync.get(['fileExtensions', 'interceptionEnabled'], function(result) {
+chrome.storage.sync.get(['fileExtensions', 'customFileExtensions', 'interceptionEnabled'], function(result) {
   if (result.fileExtensions && result.fileExtensions.length > 0) {
     FILE_EXTENSIONS = result.fileExtensions;
     console.log('[Aria2 Downloader] Loaded file extensions:', FILE_EXTENSIONS);
+  }
+  if (result.customFileExtensions && result.customFileExtensions.length > 0) {
+    FILE_EXTENSIONS = mergeCustomExtensions(FILE_EXTENSIONS, result.customFileExtensions);
+    console.log('[Aria2 Downloader] Merged custom file extensions');
   }
   if (result.interceptionEnabled !== undefined) {
     interceptionEnabled = result.interceptionEnabled;
@@ -30,11 +49,28 @@ chrome.storage.onChanged.addListener(function(changes, namespace) {
     FILE_EXTENSIONS = changes.fileExtensions.newValue;
     console.log('[Aria2 Downloader] Updated file extensions:', FILE_EXTENSIONS);
   }
+  if (namespace === 'sync' && changes.customFileExtensions) {
+    chrome.storage.sync.get(['fileExtensions', 'customFileExtensions'], function(r) {
+      const base = r.fileExtensions && r.fileExtensions.length > 0 ? r.fileExtensions : FILE_EXTENSIONS;
+      FILE_EXTENSIONS = mergeCustomExtensions(base, r.customFileExtensions || []);
+      console.log('[Aria2 Downloader] Updated after custom extensions change:', FILE_EXTENSIONS);
+    });
+  }
   if (namespace === 'sync' && changes.interceptionEnabled) {
     interceptionEnabled = changes.interceptionEnabled.newValue;
     console.log('[Aria2 Downloader] Interception toggled:', interceptionEnabled);
   }
 });
+
+// Apache/nginx autoindex and similar: file links live under long paths like /music/Catalog/a.mp3
+// — not covered by "short path" heuristics; link text may be truncated (no ".mp3" in the label).
+function isHttpDirectoryIndexPage() {
+  const title = (document.title || '').trim().toLowerCase();
+  if (!title.startsWith('index of') || !document.body) {
+    return false;
+  }
+  return !!document.querySelector('a[href="../"], a[href$="../"], a[href="/"], a[href^="../"]');
+}
 
 // Function to check if URL or text is a downloadable file
 function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
@@ -80,6 +116,14 @@ function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
         console.log('[Aria2 Downloader] ✓ IP/Local address detected - will intercept');
         return true; // Always intercept files from IP/local addresses
       }
+
+      // Open HTTP indexes (e.g. "Index of /music/Catalog/") — long paths like
+      // /music/Catalog/All%20About%20That%20Bass%20-%20Meghan%20Trainor.mp3 are
+      // not "short path" downloads; link labels may be truncated (no ".mp3" in text).
+      if (isHttpDirectoryIndexPage()) {
+        console.log('[Aria2 Downloader] ✓ HTTP directory index — will intercept');
+        return true;
+      }
       
       // For domain names, check if it's a direct download link
       const isDirectDownload = 
@@ -89,6 +133,7 @@ function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
         pathname.includes('/dl/') ||
         pathname.includes('/download/') ||
         pathname.includes('/media/') ||
+        pathname.includes('/music/') ||
         pathname.includes('/video/') ||
         pathname.includes('/movie/') ||
         hostname.includes('file-') || // file-server.gofile.io
