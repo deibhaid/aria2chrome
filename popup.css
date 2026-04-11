@@ -163,6 +163,27 @@ h1 {
   text-overflow: ellipsis;
 }
 
+.download-url-copy {
+  cursor: pointer;
+  color: #5c6bc0;
+  user-select: none;
+}
+
+.download-url-copy:hover {
+  color: #3949ab;
+  text-decoration: underline;
+}
+
+.download-url-copy:focus {
+  outline: 2px solid #c5cae9;
+  outline-offset: 1px;
+}
+
+.download-url-copied {
+  color: #2e7d32 !important;
+  text-decoration: none !important;
+}
+
 .download-controls {
   display: flex;
   gap: 5px;

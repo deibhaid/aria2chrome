@@ -113,6 +113,8 @@ function renderDownloads() {
     const completed = download.completedLength ? formatBytes(parseInt(download.completedLength)) : '0 B';
     const url = download.url || '';
     const truncatedUrl = url.length > 60 ? url.substring(0, 57) + '...' : url;
+    const urlForAttr = url ? encodeURIComponent(url) : '';
+    const labelForAttr = encodeURIComponent(truncatedUrl);
     
     return `
       <div class="download-item">
@@ -135,7 +137,7 @@ function renderDownloads() {
           </div>
         </div>
         
-        ${url ? `<div class="download-url" title="${url}">${truncatedUrl}</div>` : ''}
+        ${url ? `<div class="download-url download-url-copy" role="button" tabindex="0" data-full-url="${urlForAttr}" data-label-display="${labelForAttr}" title="Click to copy full URL">${truncatedUrl}</div>` : ''}
         
         ${download.status !== 'complete' ? `
           <div class="progress-bar">
@@ -617,4 +619,84 @@ document.addEventListener('DOMContentLoaded', () => {
       closeManualModal();
     }
   });
+
+  const downloadsListEl = document.getElementById('downloadsList');
+  downloadsListEl.addEventListener('click', handleDownloadUrlClick);
+  downloadsListEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const el = e.target.closest('.download-url-copy');
+    if (!el) return;
+    e.preventDefault();
+    copyFullUrlFromRow(el);
+  });
 });
+
+/** Copy full download URL from a .download-url-copy row (click handler). */
+function handleDownloadUrlClick(e) {
+  const el = e.target.closest('.download-url-copy');
+  if (!el) return;
+  e.preventDefault();
+  e.stopPropagation();
+  copyFullUrlFromRow(el);
+}
+
+async function copyFullUrlFromRow(el) {
+  const encoded = el.dataset.fullUrl;
+  if (!encoded) return;
+  let fullUrl;
+  try {
+    fullUrl = decodeURIComponent(encoded);
+  } catch (err) {
+    console.warn('[Popup] Bad URL data:', err);
+    return;
+  }
+  const labelEncoded = el.dataset.labelDisplay || '';
+  let restoreText;
+  try {
+    restoreText = labelEncoded ? decodeURIComponent(labelEncoded) : el.textContent;
+  } catch (err) {
+    restoreText = el.textContent;
+  }
+
+  if (el._copyRestoreTimer) {
+    clearTimeout(el._copyRestoreTimer);
+    el._copyRestoreTimer = null;
+  }
+
+  const ok = await copyTextToClipboard(fullUrl);
+  if (!ok) {
+    return;
+  }
+  el.textContent = 'Copied!';
+  el.classList.add('download-url-copied');
+  el._copyRestoreTimer = window.setTimeout(() => {
+    el.textContent = restoreText;
+    el.classList.remove('download-url-copied');
+    el._copyRestoreTimer = null;
+  }, 1500);
+}
+
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    console.warn('[Popup] clipboard.writeText failed:', err);
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (err) {
+    console.warn('[Popup] execCommand copy failed:', err);
+    return false;
+  }
+}
