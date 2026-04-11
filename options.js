@@ -58,7 +58,7 @@ async function loadSettings() {
   
   // Load behavior toggles
   document.getElementById('autoResume').checked = result.autoResume !== undefined ? result.autoResume : true;
-  document.getElementById('showNotifications').checked = result.showNotifications !== undefined ? result.showNotifications : true;
+  document.getElementById('showNotifications').checked = result.showNotifications === true;
   
   // Render extension checkboxes
   renderExtensions();
@@ -321,7 +321,7 @@ function resetSettings() {
     document.getElementById('secret').value = '';
     document.getElementById('downloadDir').value = DEFAULT_DOWNLOAD_DIR_HINT;
     document.getElementById('autoResume').checked = true;
-    document.getElementById('showNotifications').checked = true;
+    document.getElementById('showNotifications').checked = false;
     
     selectedExtensions = [...DEFAULT_EXTENSIONS];
     customExtensions = [];

@@ -24,7 +24,7 @@ let ignoreNextDownloads = new Set(); // Track downloads to ignore (prevent loops
 const directoryIndexTabs = new Map(); // Track tabs that expose HTTP directory listings
 const DIRECTORY_CONTEXT_MENU_ID = 'aria2chrome-download-directory';
 const LINK_CONTEXT_MENU_ID = 'aria2chrome-download-link';
-let showNotifications = true;
+let showNotifications = false;
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -459,6 +459,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return;
   if (changes.fileExtensions || changes.customFileExtensions) {
     refreshInterceptExtensionsCache();
+  }
+  if (changes.showNotifications) {
+    showNotifications = changes.showNotifications.newValue === true;
   }
 });
 
@@ -2426,7 +2429,7 @@ async function createBackup() {
     fileExtensions: syncData.fileExtensions || null,
     customFileExtensions: syncData.customFileExtensions || null,
     autoResume: syncData.autoResume !== undefined ? syncData.autoResume : true,
-    showNotifications: syncData.showNotifications !== undefined ? syncData.showNotifications : true,
+    showNotifications: syncData.showNotifications !== undefined ? syncData.showNotifications : false,
     interceptionEnabled: syncData.interceptionEnabled !== undefined ? syncData.interceptionEnabled : true
   };
   return backupData;
