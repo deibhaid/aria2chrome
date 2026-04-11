@@ -1621,6 +1621,53 @@ async function clearHistory() {
   return clearedCount;
 }
 
+/** True if string looks like an on-disk path (not http). */
+function isLikelyLocalFilePath(p) {
+  if (!p || typeof p !== 'string') return false;
+  const t = p.trim();
+  if (t.startsWith('file://')) return true;
+  if (t.startsWith('/')) return true;
+  if (/^[A-Za-z]:[\\/]/.test(t)) return true;
+  return false;
+}
+
+/**
+ * Open the parent directory of a local file via file:// tab (Finder / Explorer / etc.).
+ * Used for aria2-completed files and restored backups — does not touch the network.
+ */
+async function openLocalDirectoryForFilePath(filepath) {
+  try {
+    const parts = filepath.split(/[/\\]/);
+    if (parts.length < 2) return false;
+    parts.pop();
+    const directory = parts.join('/');
+    if (!directory) return false;
+
+    let fileUrl;
+    if (directory.startsWith('/') || directory.startsWith('//')) {
+      fileUrl = 'file://' + directory;
+    } else if (/^[A-Za-z]:/.test(directory)) {
+      fileUrl = 'file:///' + directory.replace(/\\/g, '/');
+    } else {
+      return false;
+    }
+
+    await chrome.tabs.create({ url: fileUrl, active: false });
+    setTimeout(async () => {
+      try {
+        const tabs = await chrome.tabs.query({ url: fileUrl });
+        tabs.forEach((tab) => chrome.tabs.remove(tab.id));
+      } catch (e) {
+        // ignore
+      }
+    }, 1000);
+    return true;
+  } catch (e) {
+    console.log('[Aria2 Downloader] openLocalDirectoryForFilePath failed:', e);
+    return false;
+  }
+}
+
 // Show file in folder (cross-platform: macOS Finder, Windows Explorer, Linux file managers)
 async function showFileInFolder(filepath) {
   try {
@@ -1629,6 +1676,15 @@ async function showFileInFolder(filepath) {
     
     if (!download) {
       return { success: false, error: 'Download not found' };
+    }
+
+    // First: restored backup / aria2 paths are local — open folder without using Chrome
+    // download history or re-fetching download.url (that would trigger Save / re-download).
+    if (filepath && isLikelyLocalFilePath(filepath)) {
+      const opened = await openLocalDirectoryForFilePath(filepath);
+      if (opened) {
+        return { success: true };
+      }
     }
     
     // Method 1: Try using saved Chrome download ID
@@ -1681,79 +1737,6 @@ async function showFileInFolder(filepath) {
         }
       } catch (e) {
         console.log('Chrome downloads search failed:', e);
-      }
-    }
-    
-    // Method 3: Try to create a fake download to register the file location
-    if (filepath) {
-      try {
-        // Get directory path and filename
-        const parts = filepath.split(/[/\\]/);
-        const file = parts.pop();
-        const directory = parts.join('/');
-        
-        // Create a minimal file download to register it with Chrome
-        // This will allow chrome.downloads.show() to work
-        const downloadId = await new Promise((resolve, reject) => {
-          chrome.downloads.download({
-            url: download.url || 'data:text/plain,', // Use original URL or empty data
-            filename: file,
-            conflictAction: 'uniquify', // Don't overwrite existing file
-            saveAs: false
-          }, (id) => {
-            if (chrome.runtime.lastError) {
-              reject(chrome.runtime.lastError);
-            } else {
-              resolve(id);
-            }
-          });
-        });
-        
-        // Wait a moment for download to register
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Show BEFORE cancel — cancel() invalidates the download id for show()
-        chrome.downloads.show(downloadId);
-        const showFailed = chrome.runtime.lastError;
-        if (showFailed) {
-          console.log('[Aria2 Downloader] downloads.show (fake download):', showFailed.message);
-        }
-        
-        await chrome.downloads.cancel(downloadId);
-        
-        // Do not save chromeDownloadId — cancelled ids are invalid for future show()
-        return { success: !showFailed };
-      } catch (e) {
-        console.log('Failed to create fake download:', e);
-      }
-    }
-    
-    // Method 4: Open directory in browser (opens native file manager)
-    if (filepath) {
-      try {
-        // Extract directory path
-        const parts = filepath.split(/[/\\]/);
-        parts.pop(); // Remove filename
-        const directory = parts.join('/');
-        
-        // Open directory as file:// URL
-        // This will open in the system's default file manager:
-        // - macOS: Finder
-        // - Windows: Explorer
-        // - Linux: Nautilus, Dolphin, etc.
-        const fileUrl = 'file://' + directory;
-        
-        await chrome.tabs.create({ url: fileUrl, active: false });
-        
-        // Close the tab after a moment (file manager will have opened)
-        setTimeout(async () => {
-          const tabs = await chrome.tabs.query({ url: fileUrl });
-          tabs.forEach(tab => chrome.tabs.remove(tab.id));
-        }, 1000);
-        
-        return { success: true };
-      } catch (e) {
-        console.log('Failed to open directory:', e);
       }
     }
     
