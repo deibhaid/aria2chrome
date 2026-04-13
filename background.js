@@ -25,6 +25,8 @@ const directoryIndexTabs = new Map(); // Track tabs that expose HTTP directory l
 const DIRECTORY_CONTEXT_MENU_ID = 'aria2chrome-download-directory';
 const LINK_CONTEXT_MENU_ID = 'aria2chrome-download-link';
 let showNotifications = true;
+/** When false, skip smartRetry + duplicate fresh-link auto-resume; manual Resume still works. */
+let autoResume = true;
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
 const MAX_CONCURRENT_DOWNLOADS = 5;
 const MAX_RETRY_ATTEMPTS = 3;
@@ -431,9 +433,15 @@ chrome.runtime.onSuspend.addListener(async () => {
 
 // Load configuration from storage
 async function loadConfig() {
-  const result = await chrome.storage.sync.get(['aria2Config', 'interceptionEnabled', 'showNotifications']);
+  const result = await chrome.storage.sync.get([
+    'aria2Config',
+    'interceptionEnabled',
+    'showNotifications',
+    'autoResume'
+  ]);
   if (result.aria2Config) {
     aria2Config = { ...aria2Config, ...result.aria2Config };
+    delete aria2Config.openFolderFallbackChrome;
   }
   if (result.interceptionEnabled !== undefined) {
     interceptionEnabled = result.interceptionEnabled;
@@ -441,12 +449,16 @@ async function loadConfig() {
   if (result.showNotifications !== undefined) {
     showNotifications = result.showNotifications;
   }
+  if (result.autoResume !== undefined) {
+    autoResume = result.autoResume !== false;
+  }
   
   logInfo('Aria2 config loaded', {
     rpcUrl: aria2Config.rpcUrl,
     downloadDir: aria2Config.downloadDir,
     interceptionEnabled,
-    showNotifications
+    showNotifications,
+    autoResume
   });
   
   // Update badge based on interception state
@@ -459,6 +471,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return;
   if (changes.fileExtensions || changes.customFileExtensions) {
     refreshInterceptExtensionsCache();
+  }
+  if (changes.autoResume && Object.prototype.hasOwnProperty.call(changes.autoResume, 'newValue')) {
+    autoResume = changes.autoResume.newValue !== false;
   }
 });
 
@@ -571,33 +586,40 @@ function isDuplicateDownload(url, filename) {
     
     saveDownloads();
     
-    // Auto-resume immediately to prevent link expiration
-    console.log('[Aria2 Downloader] Auto-resuming immediately to prevent link expiration');
-    
-    // Resume asynchronously - don't wait for it
-    (async () => {
-      const resumeResult = await resumeDownload(pausedDuplicate.gid);
-      
-      if (resumeResult.success) {
-        createNotification({
-          type: 'basic',
-          iconUrl: 'icons/icon48.png',
-          title: 'Download Auto-Resumed!',
-          message: `${filename} (${progress}% complete) has been resumed with a fresh URL!`,
-          priority: 2
-        });
-        console.log('[Aria2 Downloader] ✓ Auto-resume successful for:', filename);
-      } else {
-        createNotification({
-          type: 'basic',
-          iconUrl: 'icons/icon48.png',
-          title: 'Download Link Updated',
-          message: `${filename} URL updated but auto-resume failed. Click Resume to try again.`,
-          priority: 1
-        });
-        console.log('[Aria2 Downloader] ✗ Auto-resume failed:', resumeResult.error);
-      }
-    })();
+    if (autoResume) {
+      console.log('[Aria2 Downloader] Auto-resuming immediately to prevent link expiration');
+      (async () => {
+        const resumeResult = await resumeDownload(pausedDuplicate.gid);
+        if (resumeResult.success) {
+          createNotification({
+            type: 'basic',
+            iconUrl: 'icons/icon48.png',
+            title: 'Download Auto-Resumed!',
+            message: `${filename} (${progress}% complete) has been resumed with a fresh URL!`,
+            priority: 2
+          });
+          console.log('[Aria2 Downloader] ✓ Auto-resume successful for:', filename);
+        } else {
+          createNotification({
+            type: 'basic',
+            iconUrl: 'icons/icon48.png',
+            title: 'Download Link Updated',
+            message: `${filename} URL updated but auto-resume failed. Click Resume to try again.`,
+            priority: 1
+          });
+          console.log('[Aria2 Downloader] ✗ Auto-resume failed:', resumeResult.error);
+        }
+      })();
+    } else {
+      console.log('[Aria2 Downloader] Fresh URL saved; automatic resume disabled in settings — user must click Resume');
+      createNotification({
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: 'Download link updated',
+        message: `${filename}: fresh URL saved. Click Resume (${progress}% complete). Automatic resume is off in Settings.`,
+        priority: 1
+      });
+    }
     
     // Prevent creating duplicate - we updated the existing one instead
     return true;
@@ -879,6 +901,9 @@ async function getDownloadStatus(gid) {
 // Smart retry with exponential backoff and max attempts
 async function smartRetry(gid) {
   try {
+    if (!autoResume) {
+      return { success: false, error: 'Automatic resume disabled in Settings' };
+    }
     const download = downloads[gid];
     if (!download) {
       return { success: false, error: 'Download not found' };
@@ -1472,8 +1497,9 @@ async function updateDownloadsStatus() {
             // Process queue
             await processQueue();
           } else {
-            // Actually failed, try smart retry
-            await smartRetry(download.gid);
+            if (autoResume) {
+              await smartRetry(download.gid);
+            }
           }
         }
       }
@@ -1621,150 +1647,190 @@ async function clearHistory() {
   return clearedCount;
 }
 
-// Show file in folder (cross-platform: macOS Finder, Windows Explorer, Linux file managers)
-async function showFileInFolder(filepath) {
+/**
+ * Standard aria2 has no JSON-RPC to open a folder or "reveal" a file; hooks like on-download-complete are CLI/config only.
+ * If your build adds a custom method, we call it when listed by system.listMethods (fixed names first, then conservative matches).
+ */
+async function tryAria2RpcOpenFolder(gid) {
+  if (gid == null || gid === '') return { opened: false };
   try {
-    // Find the download with this filepath
-    const download = Object.values(downloads).find(d => d.filePath === filepath);
-    
+    const methods = await aria2RPC('system.listMethods', []);
+    const list = Array.isArray(methods) ? methods : [];
+    const fixedCandidates = [
+      'aria2.openFolder',
+      'aria2.openDownloadLocation',
+      'aria2.revealFile',
+      'openFolder',
+      'system.openFolder'
+    ];
+    const dynamicFromList = list.filter((m) => {
+      if (typeof m !== 'string' || fixedCandidates.includes(m)) return false;
+      if (!/^(aria2|system)\./.test(m)) return false;
+      return /open|reveal|folder|location|show|finder|explorer/i.test(m);
+    }).sort();
+    const ordered = [...fixedCandidates, ...dynamicFromList];
+
+    for (const m of ordered) {
+      if (!list.includes(m)) continue;
+      try {
+        await aria2RPC(m, [gid]);
+        logInfo('aria2 open-folder RPC invoked', { gid, method: m });
+        return { opened: true, method: m };
+      } catch (e) {
+        console.log('[Aria2 Downloader] open-folder RPC skipped for', m, ':', e);
+      }
+    }
+  } catch (e) {
+    logInfo('aria2 open-folder RPC probe failed', { gid, err: String(e) });
+  }
+  return { opened: false };
+}
+
+/**
+ * Best-effort path from aria2 (still active/stopped). JSON-RPC has no standard "open folder" — only path refresh.
+ */
+async function resolveLocalPathFromAria2(gid) {
+  if (gid == null || gid === '') return null;
+  const d = downloads[gid];
+  try {
+    const st = await aria2RPC('aria2.tellStatus', [gid, ['files']]);
+    const p = st?.files?.[0]?.path;
+    if (p && String(p).trim()) return String(p).trim();
+  } catch (e) {
+    // Not in active/waiting/paused queue (e.g. already removed after complete)
+  }
+  try {
+    const stopped = await aria2RPC('aria2.tellStopped', [0, 100]);
+    const arr = Array.isArray(stopped) ? stopped : [];
+    for (const item of arr) {
+      if (String(item.gid) === String(gid)) {
+        const p = item.files?.[0]?.path;
+        if (p && String(p).trim()) return String(p).trim();
+      }
+    }
+  } catch (e) {
+    // ignore
+  }
+  return d?.filePath && String(d.filePath).trim() ? String(d.filePath).trim() : null;
+}
+
+/** Optional Native Messaging host (user must install manifest + enable in Options). Returns true only if host reveals successfully. */
+async function tryNativeRevealInFolder(localPath) {
+  try {
+    const r = await chrome.storage.sync.get(['nativeRevealEnabled']);
+    if (r.nativeRevealEnabled !== true) {
+      return false;
+    }
+  } catch (e) {
+    return false;
+  }
+  if (!localPath || typeof localPath !== 'string') {
+    return false;
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      resolve(ok);
+    };
+    let port;
+    try {
+      port = chrome.runtime.connectNative('com.aria2chrome.reveal');
+    } catch (e) {
+      resolve(false);
+      return;
+    }
+    if (chrome.runtime.lastError) {
+      finish(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      try {
+        port.disconnect();
+      } catch (e) {
+        /* ignore */
+      }
+      finish(false);
+    }, 8000);
+    port.onMessage.addListener((msg) => {
+      clearTimeout(t);
+      try {
+        port.disconnect();
+      } catch (e) {
+        /* ignore */
+      }
+      finish(msg && msg.ok === true);
+    });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(t);
+      if (!done) {
+        // Read lastError so Chrome does not log "Unchecked runtime.lastError" (e.g. host not installed).
+        const err = chrome.runtime.lastError;
+        if (err && err.message) {
+          console.debug('[Aria2Chrome] native reveal:', err.message);
+        }
+        finish(false);
+      }
+    });
+    try {
+      port.postMessage({ path: localPath });
+    } catch (e) {
+      clearTimeout(t);
+      finish(false);
+    }
+  });
+}
+
+// Resolve path + copy via popup; optional "open" via aria2 custom RPC or optional local Native Messaging host.
+async function showFileInFolder(filepath, gid) {
+  try {
+    let download = null;
+    if (gid != null && gid !== '' && downloads[gid]) {
+      download = downloads[gid];
+    }
+    if (!download && filepath) {
+      download = Object.values(downloads).find((d) => d.filePath === filepath);
+    }
+
     if (!download) {
       return { success: false, error: 'Download not found' };
     }
-    
-    // Method 1: Try using saved Chrome download ID
-    if (download.chromeDownloadId) {
+
+    const g = download.gid || gid;
+    let resolved = null;
+    if (g) {
       try {
-        // This works cross-platform (macOS Finder, Windows Explorer, Linux Nautilus/Dolphin)
-        chrome.downloads.show(download.chromeDownloadId);
-        return { success: true };
+        resolved = await resolveLocalPathFromAria2(g);
       } catch (e) {
-        console.log('Chrome download ID invalid, trying other methods...');
+        /* use stored path */
       }
     }
-    
-    // Method 2: Search Chrome downloads history
-    const filename = download.filename;
-    if (filename) {
-      try {
-        // Search Chrome downloads for this file
-        const chromeDownloads = await chrome.downloads.search({ 
-          filenameRegex: filename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), // Escape special chars
-          exists: true,
-          limit: 20,
-          orderBy: ['-startTime']
-        });
-        
-        // Try to find exact match
-        let matchingDownload = chromeDownloads.find(d => 
-          d.filename && d.filename.endsWith(filename)
-        );
-        
-        // If exact match not found, try partial match
-        if (!matchingDownload && chromeDownloads.length > 0) {
-          matchingDownload = chromeDownloads.find(d => 
-            d.filename && d.filename.toLowerCase().includes(filename.toLowerCase())
-          );
-        }
-        
-        if (matchingDownload) {
-          chrome.downloads.show(matchingDownload.id);
-          // Save the chrome download ID for future use
-          download.chromeDownloadId = matchingDownload.id;
-          await saveDownloads();
-          return { success: true };
-        }
-      } catch (e) {
-        console.log('Chrome downloads search failed:', e);
-      }
+    filepath = resolved || download.filePath || filepath;
+    if (!filepath) {
+      return { success: false, error: 'File path not available' };
     }
-    
-    // Method 3: Try to create a fake download to register the file location
-    if (filepath) {
-      try {
-        // Get directory path and filename
-        const parts = filepath.split(/[/\\]/);
-        const file = parts.pop();
-        const directory = parts.join('/');
-        
-        // Create a minimal file download to register it with Chrome
-        // This will allow chrome.downloads.show() to work
-        const downloadId = await new Promise((resolve, reject) => {
-          chrome.downloads.download({
-            url: download.url || 'data:text/plain,', // Use original URL or empty data
-            filename: file,
-            conflictAction: 'uniquify', // Don't overwrite existing file
-            saveAs: false
-          }, (id) => {
-            if (chrome.runtime.lastError) {
-              reject(chrome.runtime.lastError);
-            } else {
-              resolve(id);
-            }
-          });
-        });
-        
-        // Wait a moment for download to register
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Cancel the download (we don't want to re-download)
-        await chrome.downloads.cancel(downloadId);
-        
-        // Now try to show it
-        chrome.downloads.show(downloadId);
-        
-        // Save this ID
-        download.chromeDownloadId = downloadId;
-        await saveDownloads();
-        
-        return { success: true };
-      } catch (e) {
-        console.log('Failed to create fake download:', e);
-      }
+
+    const aria2Open = await tryAria2RpcOpenFolder(g);
+    if (aria2Open.opened) {
+      return {
+        success: true,
+        localPath: filepath,
+        openedVia: 'aria2',
+        method: aria2Open.method
+      };
     }
-    
-    // Method 4: Open directory in browser (opens native file manager)
-    if (filepath) {
-      try {
-        // Extract directory path
-        const parts = filepath.split(/[/\\]/);
-        parts.pop(); // Remove filename
-        const directory = parts.join('/');
-        
-        // Open directory as file:// URL
-        // This will open in the system's default file manager:
-        // - macOS: Finder
-        // - Windows: Explorer
-        // - Linux: Nautilus, Dolphin, etc.
-        const fileUrl = 'file://' + directory;
-        
-        await chrome.tabs.create({ url: fileUrl, active: false });
-        
-        // Close the tab after a moment (file manager will have opened)
-        setTimeout(async () => {
-          const tabs = await chrome.tabs.query({ url: fileUrl });
-          tabs.forEach(tab => chrome.tabs.remove(tab.id));
-        }, 1000);
-        
-        return { success: true };
-      } catch (e) {
-        console.log('Failed to open directory:', e);
-      }
+
+    const nativeOk = await tryNativeRevealInFolder(filepath);
+    if (nativeOk) {
+      return {
+        success: true,
+        localPath: filepath,
+        openedVia: 'native'
+      };
     }
-    
-    // Final fallback: Show notification with file path
-    createNotification({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'File Location',
-      message: `File saved at:\n${filepath}\n\nPlease open this location manually.`,
-      isClickable: true
-    });
-    
-    return { 
-      success: false, 
-      error: `File is located at: ${filepath}` 
-    };
-    
+
+    return { success: true, localPath: filepath, openedVia: 'none' };
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -1951,7 +2017,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
       case 'updateConfig':
         aria2Config = { ...aria2Config, ...request.config };
+        delete aria2Config.openFolderFallbackChrome;
         await saveConfig();
+        await loadConfig();
         sendResponse({ success: true });
         break;
         
@@ -1960,7 +2028,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         break;
         
       case 'showInFolder':
-        const showResult = await showFileInFolder(request.filepath);
+        const showResult = await showFileInFolder(request.filepath, request.gid);
         sendResponse(showResult);
         break;
         
@@ -2235,7 +2303,8 @@ async function restoreFromBackup() {
         // Restore config if valid
         if (backupData.config) {
           aria2Config = { ...aria2Config, ...backupData.config };
-          await chrome.storage.sync.set({ aria2Config: backupData.config });
+          delete aria2Config.openFolderFallbackChrome;
+          await chrome.storage.sync.set({ aria2Config });
         }
         
         // Restore downloads if valid
@@ -2371,7 +2440,8 @@ async function importBackup(backupData) {
     // Restore config
     if (backupData.config) {
       aria2Config = { ...aria2Config, ...backupData.config };
-      await chrome.storage.sync.set({ aria2Config: backupData.config });
+      delete aria2Config.openFolderFallbackChrome;
+      await chrome.storage.sync.set({ aria2Config });
     }
     
     // Restore downloads

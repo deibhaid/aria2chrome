@@ -128,7 +128,7 @@ function renderDownloads() {
               download.status === 'active' || download.status === 'waiting' ? 
               `<button class="control-btn" data-action="pause" data-gid="${download.gid}" title="Pause">⏸️</button>` : 
               download.status === 'complete' ?
-              `<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" data-filepath="${download.filePath || ''}" title="Show in Folder">📁</button>` :
+              `<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" data-filepath="${download.filePath || ''}" title="Copy path; try aria2 open-folder RPC; optional local native helper if enabled in Options">📁</button>` :
               download.status === 'queued' ?
               `<button class="control-btn" data-action="startQueued" data-gid="${download.gid || download.queueId}" title="Start Now">▶️</button>` :
               `<button class="control-btn" data-action="resume" data-gid="${download.gid}" title="${download.status === 'failed_permanently' ? 'Retry (Reset Attempts)' : 'Resume'}">▶️</button>`
@@ -196,7 +196,7 @@ function handleControlClick(event) {
       confirmDownload(gid);
       break;
     case 'showInFolder':
-      showInFolder(gid, filepath);
+      showInFolder(gid, filepath, event.currentTarget);
       break;
   }
 }
@@ -314,28 +314,59 @@ function removeDownload(gid) {
   });
 }
 
-// Show file in folder
-function showInFolder(gid, filepath) {
+// Show file in folder (also copies resolved local path to clipboard)
+function showInFolder(gid, filepath, buttonEl) {
   if (!filepath) {
-    // If no filepath, try to get it from downloads
     const download = downloads[gid];
     filepath = download?.filePath;
   }
-  
-  if (!filepath) {
-    alert('File path not available. The file location is unknown.');
-    return;
-  }
-  
-  chrome.runtime.sendMessage({
-    action: 'showInFolder',
-    gid: gid,
-    filepath: filepath
-  }, response => {
-    if (response && !response.success) {
-      alert('Could not open file location: ' + (response.error || 'Unknown error'));
+
+  chrome.runtime.sendMessage(
+    {
+      action: 'showInFolder',
+      gid: gid,
+      filepath: filepath || ''
+    },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        console.error('[Popup] showInFolder:', chrome.runtime.lastError.message);
+        return;
+      }
+      const pathToCopy = response?.localPath || filepath;
+      void (async () => {
+        let copied = false;
+        if (pathToCopy) {
+          copied = await copyTextToClipboard(pathToCopy);
+          highlightFolderCopyButton(buttonEl, copied);
+        }
+        if (response && !response.success) {
+          const err = response.error || 'Unknown error';
+          if (pathToCopy && copied) {
+            alert('Could not open file location: ' + err + '\n\nPath was copied to clipboard.');
+          } else if (pathToCopy && !copied) {
+            alert('Could not open file location: ' + err + '\n\nCopy to clipboard failed.');
+          } else {
+            alert('Could not open file location: ' + err);
+          }
+        }
+      })();
     }
-  });
+  );
+}
+
+/** Green (or red) highlight on 📁 for a few seconds — keeps folder icon */
+function highlightFolderCopyButton(btn, ok) {
+  if (!btn || btn.dataset.action !== 'showInFolder') return;
+  if (btn._folderCopyTimer) {
+    clearTimeout(btn._folderCopyTimer);
+    btn._folderCopyTimer = null;
+  }
+  btn.classList.remove('control-btn-path-copied', 'control-btn-path-copied-fail');
+  btn.classList.add(ok ? 'control-btn-path-copied' : 'control-btn-path-copied-fail');
+  btn._folderCopyTimer = setTimeout(() => {
+    btn.classList.remove('control-btn-path-copied', 'control-btn-path-copied-fail');
+    btn._folderCopyTimer = null;
+  }, 3500);
 }
 
 async function confirmDownload(confirmationId) {
@@ -677,26 +708,28 @@ async function copyFullUrlFromRow(el) {
 }
 
 async function copyTextToClipboard(text) {
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (err) {
-    console.warn('[Popup] clipboard.writeText failed:', err);
-  }
+  if (!text) return false;
   try {
     const ta = document.createElement('textarea');
     ta.value = text;
+    ta.setAttribute('readonly', '');
     ta.style.position = 'fixed';
     ta.style.left = '-9999px';
     document.body.appendChild(ta);
     ta.select();
     const ok = document.execCommand('copy');
     document.body.removeChild(ta);
-    return ok;
-  } catch (err) {
-    console.warn('[Popup] execCommand copy failed:', err);
-    return false;
+    if (ok) return true;
+  } catch (e) {
+    /* fall through */
   }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) {
+    /* fall through */
+  }
+  return false;
 }

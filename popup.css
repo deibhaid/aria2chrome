@@ -63,6 +63,26 @@ h1 {
   border-bottom: 1px solid #e0e0e0;
 }
 
+/* 📁 “path copied” feedback — icon stays 📁, button glows green briefly */
+.control-btn.control-btn-path-copied {
+  background: linear-gradient(145deg, #a5d6a7 0%, #81c784 55%, #66bb6a 100%) !important;
+  box-shadow:
+    0 0 0 3px #2e7d32,
+    0 3px 10px rgba(46, 125, 50, 0.45);
+  border-radius: 8px;
+  transform: scale(1.12);
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.control-btn.control-btn-path-copied-fail {
+  background: linear-gradient(145deg, #ffcdd2 0%, #ef9a9a 100%) !important;
+  box-shadow: 0 0 0 2px #c62828;
+  border-radius: 8px;
+}
+
 .stat-item {
   display: flex;
   flex-direction: column;

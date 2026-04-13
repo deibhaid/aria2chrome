@@ -302,6 +302,10 @@ document.addEventListener('click', function(event) {
       // Try to open file picker directly (we have user gesture from the click)
       if (window.showSaveFilePicker) {
         (async () => {
+          if (!extensionRuntimeAlive()) {
+            notifyExtensionReloaded();
+            return;
+          }
           try {
             const fileHandle = await window.showSaveFilePicker({
               suggestedName: decodedFilename,
@@ -312,11 +316,10 @@ document.addEventListener('click', function(event) {
               excludeAcceptAllOption: false
             });
             
-            const file = await fileHandle.getFile();
-            const selectedFilename = file.name;
+            const selectedFilename = fileHandle.name || decodedFilename;
             
             // Send to background with skipConfirmation = true
-            chrome.runtime.sendMessage({
+            safeSendChromeMessage({
               action: 'captureVideo',
               url: href,
               filename: selectedFilename,
@@ -330,7 +333,7 @@ document.addEventListener('click', function(event) {
                 }
               } else if (response && response.duplicate) {
                 console.log('[Aria2 Downloader] Duplicate download skipped');
-              } else {
+              } else if (response) {
                 showNotification('Error', response?.error || 'Failed to add to aria2 queue');
               }
             });
@@ -340,6 +343,10 @@ document.addEventListener('click', function(event) {
               // User cancelled file picker
               console.log('[Aria2 Downloader] File picker cancelled by user');
               showNotification('Cancelled', 'Download cancelled');
+              return;
+            }
+            if (isExtensionContextInvalidated(error)) {
+              notifyExtensionReloaded();
               return;
             }
             console.error('[Aria2 Downloader] File picker error:', error);
@@ -355,7 +362,7 @@ document.addEventListener('click', function(event) {
         }
         
         // Send message to background script
-        chrome.runtime.sendMessage({
+        safeSendChromeMessage({
           action: 'captureVideo',
           url: href,
           filename: confirmedName.trim(),
@@ -369,7 +376,7 @@ document.addEventListener('click', function(event) {
             }
           } else if (response && response.duplicate) {
             console.log('[Aria2 Downloader] Duplicate download skipped');
-          } else {
+          } else if (response) {
             showNotification('Error', response?.error || 'Failed to add to aria2 queue');
           }
         });
@@ -420,7 +427,7 @@ document.addEventListener('click', function(event) {
       
       const filename = getFilenameFromUrl(videoUrl, '', '');
       
-      chrome.runtime.sendMessage({
+      safeSendChromeMessage({
         action: 'captureVideo',
         url: videoUrl,
         filename: filename,
@@ -457,6 +464,65 @@ function showNotification(title, message) {
   }, 3000);
 }
 
+function isExtensionContextInvalidated(err) {
+  const m = err && (err.message || String(err));
+  return typeof m === 'string' && m.includes('Extension context invalidated');
+}
+
+function extensionRuntimeAlive() {
+  try {
+    return !!(chrome.runtime && chrome.runtime.id);
+  } catch (e) {
+    return false;
+  }
+}
+
+function notifyExtensionReloaded() {
+  showNotification('Aria2Chrome', 'Extension was updated. Refresh this page to continue.');
+}
+
+function safeSendChromeMessage(message, cb) {
+  if (!extensionRuntimeAlive()) {
+    notifyExtensionReloaded();
+    if (cb) cb(null);
+    return;
+  }
+  try {
+    chrome.runtime.sendMessage(message, function(response) {
+      if (chrome.runtime.lastError) {
+        const msg = chrome.runtime.lastError.message || '';
+        if (msg.includes('Extension context invalidated')) {
+          notifyExtensionReloaded();
+        } else if (msg) {
+          console.warn('[Aria2 Downloader] sendMessage:', msg);
+        }
+        if (cb) cb(null);
+        return;
+      }
+      if (cb) cb(response);
+    });
+  } catch (e) {
+    if (isExtensionContextInvalidated(e)) {
+      notifyExtensionReloaded();
+    } else {
+      console.error('[Aria2 Downloader] sendMessage threw:', e);
+    }
+    if (cb) cb(null);
+  }
+}
+
+function sendResponseSafe(sendResponse, payload) {
+  try {
+    if (!extensionRuntimeAlive()) {
+      return false;
+    }
+    sendResponse(payload);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // Listen for context menu events (right-click)
 document.addEventListener('contextmenu', function(event) {
   let target = event.target;
@@ -469,7 +535,7 @@ document.addEventListener('contextmenu', function(event) {
     
     if (url && isVideoUrl(url, downloadAttr, linkText)) {
       // Store the URL for context menu action
-      chrome.runtime.sendMessage({
+      safeSendChromeMessage({
         action: 'storeContextUrl',
         url: url,
         filename: getFilenameFromUrl(url, downloadAttr, linkText)
@@ -600,6 +666,16 @@ function processDirectoryDownloadAllRequest(triggerSource = 'context-menu', call
       source: triggerSource
     }))
   }, response => {
+    if (chrome.runtime.lastError) {
+      const msg = chrome.runtime.lastError.message || '';
+      if (msg.includes('Extension context invalidated')) {
+        notifyExtensionReloaded();
+      } else if (msg) {
+        console.warn('[Aria2 Downloader] downloadMultiple:', msg);
+      }
+      callback?.({ success: false, error: msg || 'Messaging failed' });
+      return;
+    }
     if (!response || response.error) {
       const errorMsg = response?.error || 'Unknown error';
       showNotification('Aria2Chrome', `Download-all failed: ${errorMsg}`);
@@ -658,6 +734,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'promptFilenameForDownload') {
     (async () => {
+      if (!extensionRuntimeAlive()) {
+        sendResponseSafe(sendResponse, { success: false, cancelled: true });
+        return;
+      }
       const suggestedName = request.suggestedName || 'download';
       const allowPicker = request.allowFilePicker !== false;
       
@@ -673,12 +753,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             excludeAcceptAllOption: false
           });
           
-          const file = await fileHandle.getFile();
-          sendResponse({ success: true, filename: file.name });
+          const filename = fileHandle.name || suggestedName;
+          sendResponseSafe(sendResponse, { success: true, filename });
           return;
         } catch (error) {
           if (error.name === 'AbortError') {
-            sendResponse({ success: false, cancelled: true });
+            sendResponseSafe(sendResponse, { success: false, cancelled: true });
+            return;
+          }
+          if (isExtensionContextInvalidated(error)) {
+            notifyExtensionReloaded();
+            sendResponseSafe(sendResponse, { success: false, cancelled: true });
             return;
           }
           // Fall through to prompt fallback on other errors
@@ -686,14 +771,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
       }
       
-      // Fallback prompt (works even without secure context)
-      const entered = prompt('Enter filename:', suggestedName);
-      if (!entered || !entered.trim()) {
-        sendResponse({ success: false, cancelled: true });
+      if (!extensionRuntimeAlive()) {
+        sendResponseSafe(sendResponse, { success: false, cancelled: true });
         return;
       }
       
-      sendResponse({ success: true, filename: entered.trim() });
+      // Fallback prompt (works even without secure context)
+      const entered = prompt('Enter filename:', suggestedName);
+      if (!entered || !entered.trim()) {
+        sendResponseSafe(sendResponse, { success: false, cancelled: true });
+        return;
+      }
+      
+      sendResponseSafe(sendResponse, { success: true, filename: entered.trim() });
     })();
     
     return true;

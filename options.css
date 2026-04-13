@@ -350,3 +350,432 @@ textarea:focus {
   border-color: #667eea;
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
+
+/* aria2 on-download-complete hints */
+.hook-details {
+  margin-bottom: 14px;
+  border: 1px solid #e8e8ec;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #fafafa;
+}
+
+.hook-details summary {
+  cursor: pointer;
+  font-weight: 500;
+  color: #333;
+  font-size: 14px;
+}
+
+.hook-details summary::-webkit-details-marker {
+  margin-right: 8px;
+}
+
+.hook-snippet {
+  margin: 12px 0 0 0;
+  padding: 12px 14px;
+  background: #f0f1f3;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-x: auto;
+  border: 1px solid #e0e0e4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.hook-note {
+  margin: 10px 0 0 0;
+  font-size: 13px;
+  color: #555;
+}
+
+.hook-note code {
+  font-size: 12px;
+  background: #eee;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.hook-ol {
+  margin: 8px 0 0 1.25rem;
+  padding-left: 0.5rem;
+  font-size: 14px;
+  color: #444;
+  line-height: 1.55;
+}
+
+.hook-ol li {
+  margin-bottom: 10px;
+}
+
+.hook-ul {
+  margin: 8px 0 0 1.25rem;
+  padding-left: 0.5rem;
+  font-size: 14px;
+  color: #444;
+  line-height: 1.55;
+}
+
+.hook-ul li {
+  margin-bottom: 10px;
+}
+
+.native-host-browser-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 12px 14px;
+  background: #f4f6fa;
+  border: 1px solid #e0e4ec;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.native-host-os-row {
+  margin-top: 10px;
+}
+
+.native-host-browser-label {
+  font-weight: 600;
+  color: #333;
+  font-size: 14px;
+}
+
+.radio-inline {
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.radio-inline input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.native-host-generator {
+  margin: 18px 0 22px;
+  padding: 16px 18px;
+  background: #fafbff;
+  border: 1px solid #e0e4ec;
+  border-radius: 8px;
+}
+
+.native-host-generator-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 10px;
+}
+
+.native-host-files-intro {
+  margin-top: 0 !important;
+}
+
+.native-host-file-details {
+  margin-top: 10px;
+  border: 1px solid #e0e4ec;
+  border-radius: 8px;
+  background: #fafbff;
+  overflow: hidden;
+}
+
+.native-host-files-intro + .native-host-file-details {
+  margin-top: 14px;
+}
+
+.native-host-file-summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  user-select: none;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #333;
+}
+
+.native-host-file-summary-label {
+  font-weight: 600;
+}
+
+.native-host-file-summary code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  background: #eee;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: #c62828;
+}
+
+/* Launcher summary only: JSON key &quot;path&quot; (not a filename) */
+.native-host-summary-kw {
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  color: #444 !important;
+}
+
+.native-host-file-details-body {
+  padding: 0 14px 14px 14px;
+  border-top: 1px solid #e8ebf0;
+  background: #fff;
+}
+
+.native-host-file-card-note {
+  margin-top: 0 !important;
+  margin-bottom: 12px !important;
+}
+
+.native-host-os-setup-guide .native-host-generator-actions {
+  margin-top: 8px;
+}
+
+.native-host-generator .form-group {
+  margin-bottom: 16px;
+}
+
+.native-host-path-only .native-host-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.native-host-file-details-body .native-host-preview-label {
+  margin-top: 12px !important;
+  margin-bottom: 6px !important;
+  font-weight: 600;
+  color: #444;
+  font-size: 13px;
+}
+
+.native-host-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.native-host-generator-actions {
+  margin: 12px 0 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.native-host-path-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.native-host-resolved-path-input {
+  flex: 1;
+  min-width: 200px;
+  background: #f9f9fb;
+  cursor: text;
+}
+
+.native-host-inline-feedback {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2e7d32;
+  align-self: center;
+  min-height: 1.2em;
+}
+
+.native-host-inline-feedback.is-error {
+  color: #c62828;
+}
+
+.native-host-resolved-hint {
+  margin-top: 0 !important;
+  margin-bottom: 6px !important;
+}
+
+.native-host-preview-label {
+  margin-top: 14px !important;
+}
+
+.native-host-manifest-preview {
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.native-host-manifest-preview.native-host-manifest-preview--placeholder {
+  color: #6b6b6b;
+  font-style: italic;
+}
+
+kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  background: #eee;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.hook-ol code {
+  font-size: 12px;
+  background: #eee;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.native-host-os-setup-guide {
+  margin-top: 18px;
+}
+
+.native-host-setup-guide-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 8px;
+}
+
+.native-host-os-tablist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 14px;
+}
+
+.native-host-os-tab {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border: 1px solid #c5cad6;
+  border-radius: 8px;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+}
+
+.native-host-os-tab:hover {
+  background: #f0f2f8;
+}
+
+.native-host-os-tab:focus-visible {
+  outline: 2px solid #4a6fa5;
+  outline-offset: 2px;
+}
+
+.native-host-os-tab--active,
+.native-host-os-tab[aria-selected="true"] {
+  background: #e8eef8;
+  border-color: #7a9cc6;
+  color: #1a2d4a;
+}
+
+.native-host-os-steps-panel {
+  margin-bottom: 14px;
+}
+
+.native-host-os-details {
+  margin-bottom: 12px;
+}
+
+.native-host-os-details-body {
+  padding-bottom: 4px;
+}
+
+.native-host-oneshot-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin: 12px 0 6px;
+}
+
+.native-host-oneshot-hint {
+  margin-top: 0 !important;
+}
+
+.native-host-oneshot-sub {
+  margin-top: 4px !important;
+  margin-bottom: 6px !important;
+  font-size: 13px;
+  color: #555;
+}
+
+.native-host-oneshot {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.native-host-os-panel {
+  margin-top: 14px;
+}
+
+.native-host-os-heading {
+  font-size: 15px;
+  font-weight: 600;
+  color: #444;
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e8e8ec;
+}
+
+.native-host-os-steps li {
+  margin-bottom: 14px;
+}
+
+.copyable-field {
+  margin: 10px 0 4px;
+}
+
+.copyable-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 6px;
+}
+
+.copyable-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.copyable-field-row .copyable-field-input {
+  flex: 1;
+  min-width: 180px;
+  background: #f9f9fb;
+  cursor: text;
+}
+
+.copyable-field-row .btn {
+  margin-right: 0;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.copyable-field-row--textarea {
+  align-items: flex-start;
+}
+
+.copyable-textarea {
+  flex: 1;
+  min-width: 180px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  resize: vertical;
+  background: #f9f9fb;
+}
+
+.copyable-field-row--textarea .btn {
+  align-self: flex-start;
+  margin-top: 2px;
+}

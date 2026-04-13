@@ -10,13 +10,12 @@
   <div class="container">
     <header>
       <h1>⚙️ Aria2Chrome Settings</h1>
-      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.1.13</p>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.1.35</p>
     </header>
     
     <main>
       <div class="settings-section">
         <h2>Aria2 RPC Configuration</h2>
-        <p class="description">Configure the connection to your aria2c RPC server</p>
         
         <div class="form-group">
           <label for="rpcUrl">RPC URL</label>
@@ -26,7 +25,7 @@
             placeholder="http://localhost:6800/jsonrpc"
             value="http://localhost:6800/jsonrpc"
           >
-          <small>The JSON-RPC endpoint of your aria2c server</small>
+          <small>aria2c JSON-RPC endpoint (default is fine if RPC is local)</small>
         </div>
         
         <div class="form-group">
@@ -36,7 +35,7 @@
             id="secret" 
             placeholder="Leave empty if no secret is set"
           >
-          <small>The secret token for aria2 RPC authentication</small>
+          <small>Matches <code>--rpc-secret</code> if you use one</small>
         </div>
         
         <div class="form-group">
@@ -46,7 +45,134 @@
             id="downloadDir" 
             placeholder="/home/username/Downloads/"
           >
-          <small>Default shown as <code>/home/username/Downloads/</code> &mdash; replace <code>username</code> (and path) with your actual user directory. <strong>Do not use ~</strong>.</small>
+          <small>Absolute path only; use your real home dir, not <code>~</code>.</small>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h2>Local helper (reveal in file manager)</h2>
+        <p class="description">
+          Optional: native messaging so 📁 can open the completed file in the file manager (not required for aria2 or link capture). Local manifest + scripts only, no network. Otherwise 📁 copies the path.
+          <a href="https://developer.chrome.com/docs/extensions/mv3/native-messaging/" target="_blank" rel="noopener">Docs</a>
+        </p>
+
+        <div class="form-group">
+          <label for="nativeHostUsername">OS username</label>
+          <input type="text" id="nativeHostUsername" class="native-host-input" placeholder="Short account name (e.g. jsmith)" autocomplete="username" spellcheck="false">
+        </div>
+        <div class="form-group">
+          <label for="nativeHostExtensionId">Extension ID</label>
+          <input type="text" id="nativeHostExtensionId" class="native-host-input" placeholder="From chrome://extensions or edge://extensions (Developer mode)" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="native-host-browser-row" role="radiogroup" aria-label="Browser to configure">
+          <span class="native-host-browser-label">Show folder paths for:</span>
+          <label class="radio-inline"><input type="radio" name="nativeHostBrowser" value="chrome" checked> Google Chrome</label>
+          <label class="radio-inline"><input type="radio" name="nativeHostBrowser" value="edge"> Microsoft Edge</label>
+        </div>
+        <input type="hidden" id="nativeHostOsActive" value="macos" autocomplete="off">
+        <p class="hook-note" style="margin-top: 8px;">Tabs pick OS for the install script and <strong>Files</strong> paths (.sh / .bat, directories).</p>
+
+        <div class="native-host-os-setup-guide">
+          <h3 class="native-host-setup-guide-title">1. Your operating system</h3>
+          <p class="hook-note">For reveal only. The install script targets the newest extension <code>native_host</code> folder, rewrites the embedded host files, updates the manifest, and prunes the same files under older version folders.</p>
+
+          <div class="native-host-os-tablist" role="tablist" aria-label="Operating system for install steps and script">
+            <button type="button" class="native-host-os-tab native-host-os-tab--active" role="tab" id="nativeHostOsTabMacos" data-native-host-os="macos" aria-selected="true" tabindex="0">macOS</button>
+            <button type="button" class="native-host-os-tab" role="tab" id="nativeHostOsTabWindows" data-native-host-os="windows" aria-selected="false" tabindex="-1">Windows</button>
+            <button type="button" class="native-host-os-tab" role="tab" id="nativeHostOsTabLinux" data-native-host-os="linux" aria-selected="false" tabindex="-1">Linux</button>
+          </div>
+
+          <div class="native-host-os-steps-panel" data-native-host-os="macos" role="tabpanel" id="nativeHostOsPanelMacos" aria-labelledby="nativeHostOsTabMacos">
+            <ol class="hook-ol native-host-os-steps">
+              <li><code>chrome://extensions</code> or <code>edge://extensions</code> (Developer mode) &mdash; copy the Extension ID above.</li>
+              <li>Check <strong>Files</strong> after you fill username and ID.</li>
+              <li>Run the <strong>all-in-one</strong> script below in <strong>Terminal</strong> (<kbd>Enter</kbd>).</li>
+              <li>Enable <strong>Use installed local helper</strong>, <strong>Save Settings</strong>, reload the extension.</li>
+            </ol>
+            <p class="hook-note native-host-oneshot-hint">Quoting handles spaces in paths (e.g. Application Support).</p>
+          </div>
+
+          <div class="native-host-os-steps-panel" data-native-host-os="windows" role="tabpanel" id="nativeHostOsPanelWindows" aria-labelledby="nativeHostOsTabWindows" hidden>
+            <ol class="hook-ol native-host-os-steps">
+              <li>Copy the <strong>Extension ID</strong> above.</li>
+              <li>Check <strong>Files</strong> paths match Chrome or Edge.</li>
+              <li>Run the <strong>all-in-one</strong> script in <strong>PowerShell</strong> (<kbd>Enter</kbd>); needs <code>python</code> on PATH.</li>
+              <li>Enable <strong>Use installed local helper</strong>, <strong>Save Settings</strong>, reload the extension.</li>
+            </ol>
+          </div>
+
+          <div class="native-host-os-steps-panel" data-native-host-os="linux" role="tabpanel" id="nativeHostOsPanelLinux" aria-labelledby="nativeHostOsTabLinux" hidden>
+            <ol class="hook-ol native-host-os-steps">
+              <li>Copy the <strong>Extension ID</strong> above.</li>
+              <li>Match <strong>Files</strong> to your browser (Chromium paths differ).</li>
+              <li>Run the <strong>all-in-one</strong> script in your shell (<kbd>Enter</kbd>).</li>
+              <li>Enable <strong>Use installed local helper</strong>, <strong>Save Settings</strong>, reload the extension.</li>
+            </ol>
+            <p class="hook-note native-host-oneshot-hint">Same path-quoting idea as macOS.</p>
+          </div>
+
+          <h4 class="native-host-oneshot-title" id="nativeHostOneShotTitle">All-in-one install script</h4>
+          <p class="hook-note native-host-oneshot-sub" id="nativeHostOneShotShellLabel">Shell: bash (macOS / Linux)</p>
+          <pre id="nativeHostOneShot" class="hook-snippet native-host-oneshot" aria-label="Pasteable install script for the OS selected above"></pre>
+          <div class="native-host-generator-actions">
+            <button type="button" id="copyNativeHostOneshotBtn" class="btn btn-secondary">Copy script</button>
+            <span id="nativeHostCopyOneshotFb" class="native-host-inline-feedback" role="status" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <div class="native-host-generator">
+          <h3 class="native-host-generator-title">Files</h3>
+          <p class="hook-note native-host-files-intro">Computed paths and previews (run the install script first if versions differ). Same Windows/macOS user as the browser profile; <code>python3</code> / PATH <code>python</code> required for the host.</p>
+
+          <details class="native-host-file-details">
+            <summary class="native-host-file-summary"><span class="native-host-file-summary-label"><code>com.aria2chrome.reveal.json</code> &mdash; browser host manifest</span></summary>
+            <div class="native-host-file-details-body">
+              <p class="hook-note native-host-file-card-note">Saved under the profile&rsquo;s <strong>NativeMessagingHosts</strong> folder. JSON <code>"path"</code> must match the launcher.</p>
+              <div class="form-group native-host-path-only">
+                <label for="nativeHostManifestFilePath">Absolute path</label>
+                <input type="text" id="nativeHostManifestFilePath" class="native-host-input native-host-resolved-path-input" readonly tabindex="0" aria-readonly="true" placeholder="(Enter OS username and extension ID above)" spellcheck="false">
+              </div>
+              <p class="native-host-preview-label">Preview</p>
+              <pre id="nativeHostManifestPreview" class="hook-snippet native-host-manifest-preview" aria-label="Generated JSON preview"></pre>
+            </div>
+          </details>
+
+          <details class="native-host-file-details">
+            <summary class="native-host-file-summary"><span class="native-host-file-summary-label"><code><span data-native-host-launcher-filename>reveal-host.sh</span></code> &mdash; launcher (<code class="native-host-summary-kw">path</code> in the JSON)</span></summary>
+            <div class="native-host-file-details-body">
+              <p class="hook-note native-host-file-card-note">Lives in the extension&rsquo;s <code>native_host/</code> next to the manifest <code>"path"</code>.</p>
+              <div class="form-group native-host-path-only">
+                <label for="nativeHostResolvedPath">Absolute path</label>
+                <input type="text" id="nativeHostResolvedPath" class="native-host-input native-host-resolved-path-input" readonly tabindex="0" aria-readonly="true" placeholder="(Enter OS username and extension ID above)" spellcheck="false">
+              </div>
+              <p class="native-host-preview-label">Preview</p>
+              <pre id="nativeHostLauncherPreview" class="hook-snippet native-host-manifest-preview" aria-label="Launcher script preview"></pre>
+            </div>
+          </details>
+
+          <details class="native-host-file-details">
+            <summary class="native-host-file-summary"><span class="native-host-file-summary-label"><code>aria2chrome_native_host.py</code> &mdash; Python native host</span></summary>
+            <div class="native-host-file-details-body">
+              <p class="hook-note native-host-file-card-note">Same <code>native_host/</code> folder as the launcher.</p>
+              <div class="form-group native-host-path-only">
+                <label for="nativeHostPythonPath">Absolute path</label>
+                <input type="text" id="nativeHostPythonPath" class="native-host-input native-host-resolved-path-input" readonly tabindex="0" aria-readonly="true" placeholder="(Enter OS username and extension ID above)" spellcheck="false">
+              </div>
+              <p class="native-host-preview-label">Preview</p>
+              <pre id="nativeHostPythonPreview" class="hook-snippet native-host-manifest-preview" aria-label="Python host note"></pre>
+            </div>
+          </details>
+        </div>
+
+        <p class="description">After a successful install: enable below, <strong>Save Settings</strong>, reload on <code>chrome://extensions</code> or <code>edge://extensions</code>.</p>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="nativeRevealEnabled">
+            <span>Use installed local helper for 📁 reveal</span>
+          </label>
+          <small>Only after install. If the host is missing, 📁 still copies the path. Store listings: mention optional local helper if you publish.</small>
         </div>
       </div>
       
@@ -58,7 +184,7 @@
             <input type="checkbox" id="autoResume" checked>
             <span>Automatically resume failed downloads</span>
           </label>
-          <small>Extension will attempt to resume downloads that encounter errors</small>
+          <small>Retries failed downloads automatically (toggle off to only resume manually)</small>
         </div>
         
         <div class="form-group">
@@ -66,13 +192,14 @@
             <input type="checkbox" id="showNotifications" checked>
             <span>Show browser notifications</span>
           </label>
-          <small>Display notifications when downloads are added or completed</small>
+          <small>Add / complete toasts</small>
         </div>
+
       </div>
       
       <div class="settings-section">
         <h2>File Extensions</h2>
-        <p class="description">Select which file types to capture for downloading</p>
+        <p class="description">Which link types to offer for aria2</p>
         
         <div class="extensions-container">
           <div class="extension-category">
@@ -114,7 +241,6 @@
       
       <div class="settings-section">
         <h2>Connection Test</h2>
-        <p class="description">Test your aria2 RPC connection</p>
         
         <button id="testBtn" class="btn btn-secondary">Test Connection</button>
         <div id="testResult" class="test-result"></div>
@@ -122,7 +248,6 @@
       
       <div class="settings-section">
         <h2>Backup & Restore</h2>
-        <p class="description">Export and import your settings and download history</p>
         
         <div class="backup-actions">
           <button id="exportBtn" class="btn btn-secondary">📤 Export Backup</button>
@@ -130,7 +255,7 @@
           <input type="file" id="importFile" accept=".json" style="display: none;">
         </div>
         
-        <p class="hint">💡 Backups are automatically saved every hour to preserve your data</p>
+        <p class="hint">💡 Auto-backup about hourly</p>
       </div>
       
       <div class="actions">
@@ -149,15 +274,14 @@
             <code>aria2c --enable-rpc --rpc-listen-all=true</code>
           </li>
           <li>If using a secret token, add: <code>--rpc-secret=YOUR_SECRET</code></li>
-          <li>Configure the RPC URL above (default: http://localhost:6800/jsonrpc)</li>
-          <li>Test the connection and save your settings</li>
+          <li>Set RPC URL if needed, test connection, save</li>
         </ol>
         
         <h3>💡 Tips</h3>
         <ul>
-          <li>The extension will intercept clicks on video file links (.mp4, .mkv, etc.)</li>
-          <li>Downloads will automatically resume if they fail or are interrupted</li>
-          <li>Use the popup to monitor download progress and manage your queue</li>
+          <li>Intercepts supported link types (see File Extensions)</li>
+          <li>Popup shows queue and progress</li>
+          <li><strong>Auto-resume</strong> (Extension Behavior) controls automatic retries</li>
         </ul>
       </div>
     </footer>
