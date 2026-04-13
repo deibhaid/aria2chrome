@@ -28,7 +28,16 @@ let showNotifications = true;
 /** When false, skip smartRetry + duplicate fresh-link auto-resume; manual Resume still works. */
 let autoResume = true;
 const BACKUP_FILENAME = '.aria2-downloader-backup.json';
-const MAX_CONCURRENT_DOWNLOADS = 5;
+/** Extension-side queue cap; also pushed to aria2 when sync is enabled. */
+let maxConcurrentDownloads = 5;
+/** Default per-URI options for aria2.addUri (split / connections). */
+let aria2PerDownloadOpts = {
+  split: 16,
+  minSplitSize: '1M',
+  maxConnectionPerServer: 16
+};
+/** Last RPC failure for diagnostics (service worker memory only). */
+let lastAria2RpcError = null;
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_DELAYS = [5000, 15000, 60000]; // 5s, 15s, 60s (exponential backoff)
 const LOG_STORAGE_KEY = 'aria2Logs';
@@ -437,7 +446,9 @@ async function loadConfig() {
     'aria2Config',
     'interceptionEnabled',
     'showNotifications',
-    'autoResume'
+    'autoResume',
+    'maxConcurrentDownloads',
+    'aria2PerDownloadOpts'
   ]);
   if (result.aria2Config) {
     aria2Config = { ...aria2Config, ...result.aria2Config };
@@ -452,13 +463,24 @@ async function loadConfig() {
   if (result.autoResume !== undefined) {
     autoResume = result.autoResume !== false;
   }
+  maxConcurrentDownloads = clampInt(result.maxConcurrentDownloads ?? 5, 1, 32);
+  const perDlDefaults = { split: 16, minSplitSize: '1M', maxConnectionPerServer: 16 };
+  if (result.aria2PerDownloadOpts && typeof result.aria2PerDownloadOpts === 'object') {
+    const p = result.aria2PerDownloadOpts;
+    aria2PerDownloadOpts = {
+      split: clampInt(p.split ?? perDlDefaults.split, 1, 32),
+      minSplitSize: (p.minSplitSize && String(p.minSplitSize).trim()) || perDlDefaults.minSplitSize,
+      maxConnectionPerServer: clampInt(p.maxConnectionPerServer ?? perDlDefaults.maxConnectionPerServer, 1, 32)
+    };
+  }
   
   logInfo('Aria2 config loaded', {
     rpcUrl: aria2Config.rpcUrl,
     downloadDir: aria2Config.downloadDir,
     interceptionEnabled,
     showNotifications,
-    autoResume
+    autoResume,
+    maxConcurrentDownloads
   });
   
   // Update badge based on interception state
@@ -474,6 +496,19 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   }
   if (changes.autoResume && Object.prototype.hasOwnProperty.call(changes.autoResume, 'newValue')) {
     autoResume = changes.autoResume.newValue !== false;
+  }
+  if (changes.maxConcurrentDownloads && Object.prototype.hasOwnProperty.call(changes.maxConcurrentDownloads, 'newValue')) {
+    maxConcurrentDownloads = clampInt(changes.maxConcurrentDownloads.newValue, 1, 32);
+  }
+  if (changes.aria2PerDownloadOpts && Object.prototype.hasOwnProperty.call(changes.aria2PerDownloadOpts, 'newValue')) {
+    const nv = changes.aria2PerDownloadOpts.newValue;
+    if (nv && typeof nv === 'object') {
+      aria2PerDownloadOpts = {
+        split: nv.split ?? aria2PerDownloadOpts.split,
+        minSplitSize: nv.minSplitSize ?? aria2PerDownloadOpts.minSplitSize,
+        maxConnectionPerServer: nv.maxConnectionPerServer ?? aria2PerDownloadOpts.maxConnectionPerServer
+      };
+    }
   }
 });
 
@@ -516,13 +551,54 @@ async function aria2RPC(method, params = []) {
       throw new Error(data.error.message || 'Aria2 RPC error');
     }
     
+    lastAria2RpcError = null;
     return data.result;
   } catch (error) {
+    lastAria2RpcError = {
+      message: error.message || String(error),
+      method,
+      at: Date.now()
+    };
     // Provide more helpful error messages
     if (error.message.includes('Failed to fetch') || error.name === 'TypeError') {
       throw new Error('aria2c is not running or not accessible at ' + aria2Config.rpcUrl);
     }
     throw error;
+  }
+}
+
+function clampInt(n, lo, hi) {
+  const x = parseInt(String(n), 10);
+  if (!Number.isFinite(x)) return lo;
+  return Math.min(hi, Math.max(lo, x));
+}
+
+function mergePerDownloadSplitIntoOptions(options) {
+  const o = aria2PerDownloadOpts || {};
+  const split = clampInt(o.split, 1, 32);
+  const mcs = clampInt(o.maxConnectionPerServer, 1, 32);
+  options['max-connection-per-server'] = String(mcs);
+  options.split = String(split);
+  options['min-split-size'] = (o.minSplitSize && String(o.minSplitSize).trim()) || '1M';
+}
+
+/** Push bandwidth / concurrency to the aria2 daemon (optional; user-controlled). */
+async function applyAria2GlobalLimitsFromStorage() {
+  const r = await chrome.storage.sync.get(['maxOverallDownloadLimit', 'syncAria2GlobalLimits']);
+  if (r.syncAria2GlobalLimits === false) {
+    return { applied: false, reason: 'sync_disabled' };
+  }
+  const limitRaw = (r.maxOverallDownloadLimit || '').trim();
+  const opts = {
+    'max-overall-download-limit': limitRaw === '' ? '0' : limitRaw,
+    'max-concurrent-downloads': String(clampInt(maxConcurrentDownloads, 1, 32))
+  };
+  try {
+    await aria2RPC('aria2.changeGlobalOption', [opts]);
+    return { applied: true, opts };
+  } catch (e) {
+    logError('applyAria2GlobalLimitsFromStorage failed', { error: e.message });
+    return { applied: false, error: e.message };
   }
 }
 
@@ -651,7 +727,7 @@ async function addDownload(url, filename, metadata = {}, skipConfirmation = fals
   
   // Check if we're at max capacity
   const activeCount = getActiveDownloadCount();
-  if (activeCount >= MAX_CONCURRENT_DOWNLOADS) {
+  if (activeCount >= maxConcurrentDownloads) {
     // Add to queue instead
     const queueId = 'queue_' + Date.now() + '_' + Math.random().toString(36).substring(7);
     const queuedDownload = {
@@ -723,14 +799,9 @@ async function startDownload(url, filename, metadata = {}, skipConfirmation = fa
       // Enable automatic resume if file exists
       continue: 'true',
       // Allow overwrite to resume existing partial downloads
-      'allow-overwrite': 'true',
-      // Max connection per server for faster downloads
-      'max-connection-per-server': '16',
-      // Split file into 16 chunks
-      split: '16',
-      // Minimum split size (1MB)
-      'min-split-size': '1M'
+      'allow-overwrite': 'true'
     };
+    mergePerDownloadSplitIntoOptions(options);
     
     if (configuredDir) {
       // Expand and clean the path
@@ -813,7 +884,7 @@ async function startDownload(url, filename, metadata = {}, skipConfirmation = fa
 async function processQueue() {
   const activeCount = getActiveDownloadCount();
   
-  if (activeCount < MAX_CONCURRENT_DOWNLOADS && downloadQueue.length > 0) {
+  if (activeCount < maxConcurrentDownloads && downloadQueue.length > 0) {
     // Get most recent queued download (LIFO - Last In First Out)
     const queuedDownload = downloadQueue.pop();
     
@@ -1080,6 +1151,7 @@ async function resumeDownload(gid, manualResume = true) {
           // Allow overwrite to resume existing partial file
           'allow-overwrite': 'true'
         };
+        mergePerDownloadSplitIntoOptions(options);
         
         if (aria2Config.downloadDir) {
           options.dir = expandPath(aria2Config.downloadDir);
@@ -1198,11 +1270,9 @@ async function resumeDownload(gid, manualResume = true) {
         const options = {
           out: download.filename,
           continue: 'true',
-          'allow-overwrite': 'true',
-          'max-connection-per-server': '16',
-          split: '16',
-          'min-split-size': '1M'
+          'allow-overwrite': 'true'
         };
+        mergePerDownloadSplitIntoOptions(options);
         
         if (aria2Config.downloadDir) {
           options.dir = expandPath(aria2Config.downloadDir);
@@ -2022,6 +2092,48 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         await loadConfig();
         sendResponse({ success: true });
         break;
+
+      case 'applyAria2GlobalLimits':
+        await loadConfig();
+        sendResponse(await applyAria2GlobalLimitsFromStorage());
+        break;
+
+      case 'getDiagnostics':
+        await loadConfig();
+        {
+          let aria2Version = null;
+          let rpcReachable = false;
+          let versionError = null;
+          let globalOptErr = null;
+          let globalOpts = null;
+          try {
+            aria2Version = await aria2RPC('aria2.getVersion', []);
+            rpcReachable = true;
+          } catch (e) {
+            versionError = e.message;
+          }
+          try {
+            globalOpts = await aria2RPC('aria2.getGlobalOption', [
+              ['max-overall-download-limit', 'max-concurrent-downloads']
+            ]);
+          } catch (e) {
+            globalOptErr = e.message;
+          }
+          sendResponse({
+            success: true,
+            rpcUrl: aria2Config.rpcUrl,
+            rpcReachable,
+            aria2Version: aria2Version?.version || null,
+            aria2VersionRaw: aria2Version,
+            versionError,
+            globalAria2Options: globalOpts,
+            globalOptionError: globalOptErr,
+            lastRpcError: lastAria2RpcError,
+            maxConcurrentDownloads,
+            aria2PerDownloadOpts: { ...aria2PerDownloadOpts }
+          });
+        }
+        break;
         
       case 'getConfig':
         sendResponse({ config: aria2Config });
@@ -2268,7 +2380,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Create backup data
 async function createBackup() {
   // Get all settings from storage
-  const syncData = await chrome.storage.sync.get(['fileExtensions', 'customFileExtensions', 'autoResume', 'showNotifications', 'interceptionEnabled']);
+  const syncData = await chrome.storage.sync.get([
+    'fileExtensions',
+    'customFileExtensions',
+    'autoResume',
+    'showNotifications',
+    'interceptionEnabled',
+    'maxConcurrentDownloads',
+    'aria2PerDownloadOpts',
+    'maxOverallDownloadLimit',
+    'syncAria2GlobalLimits',
+    'siteInterceptDenyHosts',
+    'siteInterceptAllowHosts',
+    'optionsTheme',
+    'localHelperDetailsOpen'
+  ]);
   
   const backupData = {
     version: '1.0',
@@ -2279,7 +2405,15 @@ async function createBackup() {
     customFileExtensions: syncData.customFileExtensions || null,
     autoResume: syncData.autoResume !== undefined ? syncData.autoResume : true,
     showNotifications: syncData.showNotifications !== undefined ? syncData.showNotifications : true,
-    interceptionEnabled: syncData.interceptionEnabled !== undefined ? syncData.interceptionEnabled : true
+    interceptionEnabled: syncData.interceptionEnabled !== undefined ? syncData.interceptionEnabled : true,
+    maxConcurrentDownloads: syncData.maxConcurrentDownloads,
+    aria2PerDownloadOpts: syncData.aria2PerDownloadOpts || null,
+    maxOverallDownloadLimit: syncData.maxOverallDownloadLimit,
+    syncAria2GlobalLimits: syncData.syncAria2GlobalLimits,
+    siteInterceptDenyHosts: syncData.siteInterceptDenyHosts,
+    siteInterceptAllowHosts: syncData.siteInterceptAllowHosts,
+    optionsTheme: syncData.optionsTheme,
+    localHelperDetailsOpen: syncData.localHelperDetailsOpen
   };
   return backupData;
 }
@@ -2473,6 +2607,20 @@ async function importBackup(backupData) {
       interceptionEnabled = backupData.interceptionEnabled;
       await chrome.storage.sync.set({ interceptionEnabled: backupData.interceptionEnabled });
     }
+
+    const extraSync = {};
+    if (backupData.maxConcurrentDownloads !== undefined) extraSync.maxConcurrentDownloads = backupData.maxConcurrentDownloads;
+    if (backupData.aria2PerDownloadOpts) extraSync.aria2PerDownloadOpts = backupData.aria2PerDownloadOpts;
+    if (backupData.maxOverallDownloadLimit !== undefined) extraSync.maxOverallDownloadLimit = backupData.maxOverallDownloadLimit;
+    if (backupData.syncAria2GlobalLimits !== undefined) extraSync.syncAria2GlobalLimits = backupData.syncAria2GlobalLimits;
+    if (Array.isArray(backupData.siteInterceptDenyHosts)) extraSync.siteInterceptDenyHosts = backupData.siteInterceptDenyHosts;
+    if (Array.isArray(backupData.siteInterceptAllowHosts)) extraSync.siteInterceptAllowHosts = backupData.siteInterceptAllowHosts;
+    if (backupData.optionsTheme) extraSync.optionsTheme = backupData.optionsTheme;
+    if (backupData.localHelperDetailsOpen !== undefined) extraSync.localHelperDetailsOpen = backupData.localHelperDetailsOpen;
+    if (Object.keys(extraSync).length > 0) {
+      await chrome.storage.sync.set(extraSync);
+    }
+    await loadConfig();
     
     // Save to storage for future restores
     await saveBackupToStorage();

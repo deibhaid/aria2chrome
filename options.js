@@ -35,6 +35,46 @@ const NATIVE_HOST_BAT_EMBED = "@echo off\nREM Native Messaging wrapper for Chrom
 let selectedExtensions = [];
 let customExtensions = [];
 
+function clampInt(n, lo, hi) {
+  const x = parseInt(String(n), 10);
+  if (!Number.isFinite(x)) return lo;
+  return Math.min(hi, Math.max(lo, x));
+}
+
+function parseHostLines(text) {
+  return (text || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function hostsArrayToText(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return '';
+  return arr.join('\n');
+}
+
+function sendMessagePromise(msg) {
+  return new Promise((resolve, reject) => {
+    try {
+      chrome.runtime.sendMessage(msg, (r) => {
+        const err = chrome.runtime.lastError;
+        if (err) {
+          reject(new Error(err.message));
+        } else {
+          resolve(r);
+        }
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+function applyOptionsTheme(theme) {
+  const t = theme === 'light' || theme === 'dark' || theme === 'system' ? theme : 'system';
+  document.documentElement.setAttribute('data-options-theme', t);
+}
+
 // Load saved settings
 async function loadSettings() {
   const result = await chrome.storage.sync.get([
@@ -46,7 +86,15 @@ async function loadSettings() {
     'nativeRevealEnabled',
     'nativeHostManifestOs',
     'nativeHostManifestUsername',
-    'nativeHostManifestExtensionId'
+    'nativeHostManifestExtensionId',
+    'maxConcurrentDownloads',
+    'aria2PerDownloadOpts',
+    'maxOverallDownloadLimit',
+    'syncAria2GlobalLimits',
+    'siteInterceptDenyHosts',
+    'siteInterceptAllowHosts',
+    'optionsTheme',
+    'localHelperDetailsOpen'
   ]);
   
   // Load aria2 config
@@ -75,6 +123,33 @@ async function loadSettings() {
   document.getElementById('autoResume').checked = result.autoResume !== undefined ? result.autoResume : true;
   document.getElementById('showNotifications').checked = result.showNotifications !== undefined ? result.showNotifications : true;
   document.getElementById('nativeRevealEnabled').checked = result.nativeRevealEnabled === true;
+
+  const mc = document.getElementById('maxConcurrentDownloads');
+  if (mc) mc.value = String(clampInt(result.maxConcurrentDownloads ?? 5, 1, 32));
+  const per = result.aria2PerDownloadOpts && typeof result.aria2PerDownloadOpts === 'object' ? result.aria2PerDownloadOpts : {};
+  const splitEl = document.getElementById('aria2Split');
+  const minSplitEl = document.getElementById('aria2MinSplitSize');
+  const mcsEl = document.getElementById('aria2MaxConnPerServer');
+  if (splitEl) splitEl.value = String(clampInt(per.split ?? 16, 1, 32));
+  if (minSplitEl) minSplitEl.value = per.minSplitSize || '1M';
+  if (mcsEl) mcsEl.value = String(clampInt(per.maxConnectionPerServer ?? 16, 1, 32));
+  const mol = document.getElementById('maxOverallDownloadLimit');
+  if (mol) mol.value = result.maxOverallDownloadLimit != null ? String(result.maxOverallDownloadLimit) : '';
+  const syncGlob = document.getElementById('syncAria2GlobalLimits');
+  if (syncGlob) syncGlob.checked = result.syncAria2GlobalLimits !== false;
+  const denyTa = document.getElementById('siteInterceptDenyHosts');
+  const allowTa = document.getElementById('siteInterceptAllowHosts');
+  if (denyTa) denyTa.value = hostsArrayToText(result.siteInterceptDenyHosts);
+  if (allowTa) allowTa.value = hostsArrayToText(result.siteInterceptAllowHosts);
+  const themeSel = document.getElementById('optionsTheme');
+  if (themeSel) {
+    themeSel.value = result.optionsTheme === 'light' || result.optionsTheme === 'dark' ? result.optionsTheme : 'system';
+    applyOptionsTheme(themeSel.value);
+  }
+  const localDetails = document.getElementById('section-local-helper');
+  if (localDetails) {
+    localDetails.open = result.localHelperDetailsOpen === true || result.nativeRevealEnabled === true;
+  }
 
   const userEl = document.getElementById('nativeHostUsername');
   const idEl = document.getElementById('nativeHostExtensionId');
@@ -901,6 +976,12 @@ async function saveSettings() {
   };
   const autoResumeValue = document.getElementById('autoResume').checked;
   const showNotificationsValue = document.getElementById('showNotifications').checked;
+  const perDl = {
+    split: clampInt(document.getElementById('aria2Split')?.value, 1, 32),
+    minSplitSize: document.getElementById('aria2MinSplitSize')?.value.trim() || '1M',
+    maxConnectionPerServer: clampInt(document.getElementById('aria2MaxConnPerServer')?.value, 1, 32)
+  };
+  const localDetails = document.getElementById('section-local-helper');
   
   try {
     await chrome.storage.sync.set({ 
@@ -909,15 +990,28 @@ async function saveSettings() {
       customFileExtensions: customExtensions,
       autoResume: autoResumeValue,
       showNotifications: showNotificationsValue,
-      nativeRevealEnabled: document.getElementById('nativeRevealEnabled').checked
+      nativeRevealEnabled: document.getElementById('nativeRevealEnabled').checked,
+      maxConcurrentDownloads: clampInt(document.getElementById('maxConcurrentDownloads')?.value, 1, 32),
+      aria2PerDownloadOpts: perDl,
+      maxOverallDownloadLimit: document.getElementById('maxOverallDownloadLimit')?.value.trim() ?? '',
+      syncAria2GlobalLimits: document.getElementById('syncAria2GlobalLimits')?.checked !== false,
+      siteInterceptDenyHosts: parseHostLines(document.getElementById('siteInterceptDenyHosts')?.value),
+      siteInterceptAllowHosts: parseHostLines(document.getElementById('siteInterceptAllowHosts')?.value),
+      optionsTheme: document.getElementById('optionsTheme')?.value || 'system',
+      localHelperDetailsOpen: localDetails ? !!localDetails.open : false
     });
     await persistNativeHostManifestDraft();
     await chrome.storage.sync.set({ nativeHostManifestOs: getNativeHostOsChoice() });
     
-    // Notify background script to reload config
-    chrome.runtime.sendMessage({ action: 'updateConfig', config }, response => {
+    await sendMessagePromise({ action: 'updateConfig', config });
+    const glob = await sendMessagePromise({ action: 'applyAria2GlobalLimits' });
+    if (glob && glob.applied === false && glob.reason === 'sync_disabled') {
+      showSaveStatus('Settings saved (aria2 global limits not synced — disabled).', 'success');
+    } else if (glob && glob.error) {
+      showSaveStatus('Settings saved; aria2 global limits: ' + glob.error, 'success');
+    } else {
       showSaveStatus('Settings saved successfully!', 'success');
-    });
+    }
     
     chrome.runtime.sendMessage({ 
       action: 'updatePreferences', 
@@ -1002,8 +1096,74 @@ function resetSettings() {
     selectedExtensions = [...DEFAULT_EXTENSIONS];
     customExtensions = [];
     renderExtensions();
+
+    const mc = document.getElementById('maxConcurrentDownloads');
+    if (mc) mc.value = '5';
+    const splitEl = document.getElementById('aria2Split');
+    const minSplitEl = document.getElementById('aria2MinSplitSize');
+    const mcsEl = document.getElementById('aria2MaxConnPerServer');
+    if (splitEl) splitEl.value = '16';
+    if (minSplitEl) minSplitEl.value = '1M';
+    if (mcsEl) mcsEl.value = '16';
+    const mol = document.getElementById('maxOverallDownloadLimit');
+    if (mol) mol.value = '';
+    const syncGlob = document.getElementById('syncAria2GlobalLimits');
+    if (syncGlob) syncGlob.checked = true;
+    const denyTa = document.getElementById('siteInterceptDenyHosts');
+    const allowTa = document.getElementById('siteInterceptAllowHosts');
+    if (denyTa) denyTa.value = '';
+    if (allowTa) allowTa.value = '';
+    const themeSel = document.getElementById('optionsTheme');
+    if (themeSel) {
+      themeSel.value = 'system';
+      applyOptionsTheme('system');
+    }
+    const localDetails = document.getElementById('section-local-helper');
+    if (localDetails) localDetails.open = false;
     
     showSaveStatus('Settings reset to defaults. Click Save to apply.', 'success');
+  }
+}
+
+async function copyDownloadDirPath() {
+  const el = document.getElementById('downloadDir');
+  if (!el) return;
+  try {
+    await navigator.clipboard.writeText(el.value || '');
+    showSaveStatus('Download path copied.', 'success');
+  } catch (e) {
+    showSaveStatus('Copy failed.', 'error');
+  }
+}
+
+function applyTypicalLocalAria2Preset() {
+  const os = detectNativeHostOs();
+  const userEl = document.getElementById('nativeHostUsername');
+  const user = (userEl && userEl.value.trim()) || 'USERNAME';
+  const rpc = document.getElementById('rpcUrl');
+  const dir = document.getElementById('downloadDir');
+  if (rpc) rpc.value = 'http://localhost:6800/jsonrpc';
+  if (!dir) return;
+  if (os === 'windows') {
+    dir.value = `C:\\Users\\${user}\\Downloads`;
+  } else if (os === 'macos') {
+    dir.value = `/Users/${user}/Downloads`;
+  } else {
+    dir.value = `/home/${user}/Downloads`;
+  }
+  showSaveStatus('Filled typical local RPC URL and download folder. Review and Save.', 'success');
+}
+
+async function runDiagnostics() {
+  const pre = document.getElementById('diagnosticsOutput');
+  if (!pre) return;
+  pre.hidden = false;
+  pre.textContent = 'Running…';
+  try {
+    const d = await sendMessagePromise({ action: 'getDiagnostics' });
+    pre.textContent = JSON.stringify(d, null, 2);
+  } catch (e) {
+    pre.textContent = 'Error: ' + (e && e.message ? e.message : String(e));
   }
 }
 
@@ -1103,6 +1263,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('saveBtn').addEventListener('click', saveSettings);
   document.getElementById('resetBtn').addEventListener('click', resetSettings);
   document.getElementById('testBtn').addEventListener('click', testConnection);
+  document.getElementById('diagnosticsBtn')?.addEventListener('click', () => void runDiagnostics());
+  document.getElementById('copyDownloadDirBtn')?.addEventListener('click', () => void copyDownloadDirPath());
+  document.getElementById('typicalLocalAria2Btn')?.addEventListener('click', applyTypicalLocalAria2Preset);
+  document.getElementById('optionsTheme')?.addEventListener('change', (e) => {
+    applyOptionsTheme(e.target.value);
+    void chrome.storage.sync.set({ optionsTheme: e.target.value });
+  });
   document.getElementById('addCustomBtn').addEventListener('click', addCustomExtension);
   document.getElementById('customExtension').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {

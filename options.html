@@ -10,11 +10,30 @@
   <div class="container">
     <header>
       <h1>⚙️ Aria2Chrome Settings</h1>
-      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.1.35</p>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.0</p>
+      <div class="header-theme-row">
+        <label for="optionsTheme" class="theme-label">Appearance</label>
+        <select id="optionsTheme" title="Options page theme">
+          <option value="system">Match system</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </div>
     </header>
     
     <main>
-      <div class="settings-section">
+      <nav class="options-toc" aria-label="Page sections">
+        <a href="#section-rpc">RPC</a>
+        <a href="#section-limits">Limits</a>
+        <a href="#section-site-rules">Sites</a>
+        <a href="#section-local-helper">Local helper</a>
+        <a href="#section-behavior">Behavior</a>
+        <a href="#section-extensions">Extensions</a>
+        <a href="#section-connection">Connection</a>
+        <a href="#section-backup">Backup</a>
+      </nav>
+
+      <div class="settings-section" id="section-rpc">
         <h2>Aria2 RPC Configuration</h2>
         
         <div class="form-group">
@@ -40,17 +59,74 @@
         
         <div class="form-group">
           <label for="downloadDir">Download Directory</label>
-          <input 
-            type="text" 
-            id="downloadDir" 
-            placeholder="/home/username/Downloads/"
-          >
-          <small>Absolute path only; use your real home dir, not <code>~</code>.</small>
+          <div class="input-with-actions">
+            <input 
+              type="text" 
+              id="downloadDir" 
+              placeholder="/home/username/Downloads/"
+            >
+            <button type="button" id="copyDownloadDirBtn" class="btn btn-secondary btn-inline">Copy path</button>
+          </div>
+          <small>Absolute path only; use your real home dir, not <code>~</code>. The browser cannot read your OS username—use <strong>Typical local aria2</strong> to fill a template from detected OS (same signals as the Local helper tabs).</small>
+          <div class="form-inline-actions">
+            <button type="button" id="typicalLocalAria2Btn" class="btn btn-secondary">Typical local aria2</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section" id="section-limits">
+        <h2>Downloads &amp; limits</h2>
+        <p class="description">Extension queue, per-download split options, and optional aria2 global limits (requires a reachable RPC).</p>
+        <div class="form-group">
+          <label for="maxConcurrentDownloads">Max concurrent downloads (extension queue)</label>
+          <input type="number" id="maxConcurrentDownloads" min="1" max="32" value="5">
+          <small>When this many downloads are active or waiting in the extension, new captures are queued.</small>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="syncAria2GlobalLimits" checked>
+            <span>Apply bandwidth &amp; concurrency to aria2 daemon</span>
+          </label>
+          <small>Calls <code>aria2.changeGlobalOption</code> for overall speed limit and max concurrent downloads (same value as above).</small>
+        </div>
+        <div class="form-group">
+          <label for="maxOverallDownloadLimit">Max overall download limit (aria2)</label>
+          <input type="text" id="maxOverallDownloadLimit" placeholder="e.g. 2M, 500K, or empty for unlimited">
+          <small>Examples: <code>2M</code>, <code>500K</code>. Leave empty for unlimited (aria2 <code>0</code>).</small>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group">
+            <label for="aria2Split">Split</label>
+            <input type="number" id="aria2Split" min="1" max="32" value="16">
+          </div>
+          <div class="form-group">
+            <label for="aria2MinSplitSize">Min split size</label>
+            <input type="text" id="aria2MinSplitSize" value="1M" placeholder="1M">
+          </div>
+          <div class="form-group">
+            <label for="aria2MaxConnPerServer">Max conn / server</label>
+            <input type="number" id="aria2MaxConnPerServer" min="1" max="32" value="16">
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section" id="section-site-rules">
+        <h2>Per-site interception</h2>
+        <p class="description">Hostnames only (one per line). Optional <code>*.example.com</code> suffix form. If <strong>Allow</strong> has any lines, only those hosts are intercepted; <strong>Deny</strong> always blocks matching hosts.</p>
+        <div class="form-group">
+          <label for="siteInterceptAllowHosts">Allow (optional)</label>
+          <textarea id="siteInterceptAllowHosts" rows="3" placeholder="Leave empty to allow all sites (except deny list)"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="siteInterceptDenyHosts">Deny</label>
+          <textarea id="siteInterceptDenyHosts" rows="4" placeholder="example.com&#10;*.cdn.example.net"></textarea>
         </div>
       </div>
       
-      <div class="settings-section">
-        <h2>Local helper (reveal in file manager)</h2>
+      <details class="settings-section local-helper-details" id="section-local-helper">
+        <summary class="local-helper-summary"><span class="local-helper-summary-title">Local helper (reveal in file manager)</span><span class="local-helper-summary-hint"> — optional native messaging</span></summary>
+        <div class="local-helper-details-inner">
+        <h2 class="visually-hidden">Local helper (reveal in file manager)</h2>
         <p class="description">
           Optional: native messaging so 📁 can open the completed file in the file manager (not required for aria2 or link capture). Local manifest + scripts only, no network. Otherwise 📁 copies the path.
           <a href="https://developer.chrome.com/docs/extensions/mv3/native-messaging/" target="_blank" rel="noopener">Docs</a>
@@ -174,9 +250,10 @@
           </label>
           <small>Only after install. If the host is missing, 📁 still copies the path. Store listings: mention optional local helper if you publish.</small>
         </div>
-      </div>
+        </div>
+      </details>
       
-      <div class="settings-section">
+      <div class="settings-section" id="section-behavior">
         <h2>Extension Behavior</h2>
         
         <div class="form-group">
@@ -197,7 +274,7 @@
 
       </div>
       
-      <div class="settings-section">
+      <div class="settings-section" id="section-extensions">
         <h2>File Extensions</h2>
         <p class="description">Which link types to offer for aria2</p>
         
@@ -239,14 +316,16 @@
         </div>
       </div>
       
-      <div class="settings-section">
+      <div class="settings-section" id="section-connection">
         <h2>Connection Test</h2>
         
         <button id="testBtn" class="btn btn-secondary">Test Connection</button>
+        <button type="button" id="diagnosticsBtn" class="btn btn-secondary">Run diagnostics</button>
         <div id="testResult" class="test-result"></div>
+        <pre id="diagnosticsOutput" class="diagnostics-output" hidden></pre>
       </div>
       
-      <div class="settings-section">
+      <div class="settings-section" id="section-backup">
         <h2>Backup & Restore</h2>
         
         <div class="backup-actions">

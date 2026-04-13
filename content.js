@@ -2,6 +2,10 @@
 
 let interceptionEnabled = true; // Track if interception is enabled
 
+/** Hostname rules from options (lowercase lines). Allow list empty = no allow filter. */
+let siteInterceptDenyHosts = [];
+let siteInterceptAllowHosts = [];
+
 // Default extensions (video files + archives)
 let FILE_EXTENSIONS = [
   // Video files
@@ -27,8 +31,44 @@ function mergeCustomExtensions(base, custom) {
   return out;
 }
 
+function hostMatchesSiteRule(hostname, ruleLine) {
+  const h = (hostname || '').toLowerCase();
+  const r = (ruleLine || '').trim().toLowerCase();
+  if (!h || !r) return false;
+  if (r.startsWith('*.')) {
+    const suffix = r.slice(2);
+    return h === suffix || (suffix ? h.endsWith('.' + suffix) : false);
+  }
+  return h === r || (r ? h.endsWith('.' + r) : false);
+}
+
+function isHostnameBlockedBySiteRules(hostname) {
+  const h = (hostname || '').toLowerCase();
+  if (!h) return false;
+  if (siteInterceptAllowHosts.length > 0) {
+    const allowed = siteInterceptAllowHosts.some((line) => hostMatchesSiteRule(h, line));
+    if (!allowed) return true;
+  }
+  return siteInterceptDenyHosts.some((line) => hostMatchesSiteRule(h, line));
+}
+
+function applySiteInterceptRulesFromStorage(result) {
+  if (Array.isArray(result.siteInterceptDenyHosts)) {
+    siteInterceptDenyHosts = result.siteInterceptDenyHosts.map((s) => String(s).trim()).filter(Boolean);
+  } else {
+    siteInterceptDenyHosts = [];
+  }
+  if (Array.isArray(result.siteInterceptAllowHosts)) {
+    siteInterceptAllowHosts = result.siteInterceptAllowHosts.map((s) => String(s).trim()).filter(Boolean);
+  } else {
+    siteInterceptAllowHosts = [];
+  }
+}
+
 // Load custom extensions and interception state from storage
-chrome.storage.sync.get(['fileExtensions', 'customFileExtensions', 'interceptionEnabled'], function(result) {
+chrome.storage.sync.get(
+  ['fileExtensions', 'customFileExtensions', 'interceptionEnabled', 'siteInterceptDenyHosts', 'siteInterceptAllowHosts'],
+  function(result) {
   if (result.fileExtensions && result.fileExtensions.length > 0) {
     FILE_EXTENSIONS = result.fileExtensions;
     console.log('[Aria2 Downloader] Loaded file extensions:', FILE_EXTENSIONS);
@@ -41,6 +81,7 @@ chrome.storage.sync.get(['fileExtensions', 'customFileExtensions', 'interception
     interceptionEnabled = result.interceptionEnabled;
     console.log('[Aria2 Downloader] Interception enabled:', interceptionEnabled);
   }
+  applySiteInterceptRulesFromStorage(result);
 });
 
 // Listen for extension updates
@@ -59,6 +100,12 @@ chrome.storage.onChanged.addListener(function(changes, namespace) {
   if (namespace === 'sync' && changes.interceptionEnabled) {
     interceptionEnabled = changes.interceptionEnabled.newValue;
     console.log('[Aria2 Downloader] Interception toggled:', interceptionEnabled);
+  }
+  if (namespace === 'sync' && (changes.siteInterceptDenyHosts || changes.siteInterceptAllowHosts)) {
+    chrome.storage.sync.get(['siteInterceptDenyHosts', 'siteInterceptAllowHosts'], function(r) {
+      applySiteInterceptRulesFromStorage(r);
+      console.log('[Aria2 Downloader] Site intercept rules updated');
+    });
   }
 });
 
@@ -80,6 +127,11 @@ function isVideoUrl(url, downloadAttr = '', linkText = '', target = null) {
     const urlObj = new URL(url, window.location.href);
     const pathname = urlObj.pathname.toLowerCase();
     const hostname = urlObj.hostname.toLowerCase();
+
+    if (isHostnameBlockedBySiteRules(hostname)) {
+      console.log('[Aria2 Downloader] Skipping URL (site allow/deny rules):', hostname);
+      return false;
+    }
     
     // Don't intercept navigation links on known intermediary sites
     const intermediarySites = [
