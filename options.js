@@ -32,6 +32,39 @@ const NATIVE_HOST_PY_EMBED = "#!/usr/bin/env python3\n\"\"\"\nChrome Native Mess
 const NATIVE_HOST_SH_EMBED = "#!/bin/bash\n# Wrapper so Chrome Native Messaging \"path\" is a single executable (see README).\nexec \"$(dirname \"$0\")/aria2chrome_native_host.py\"\n";
 const NATIVE_HOST_BAT_EMBED = "@echo off\nREM Native Messaging wrapper for Chrome on Windows (single executable path in manifest).\npython \"%~dp0aria2chrome_native_host.py\"\n";
 
+/** Bash installer: pick best reveal-host.sh — highest semver x.y.z, else newest mtime. */
+const NATIVE_HOST_RESOLVE_LAUNCHER_PY = String.raw`import os, re, glob
+root = os.environ.get("EXT_ID_ROOT", "")
+best_path = None
+best_tup = None
+for vdir in sorted(glob.glob(os.path.join(root, "*"))):
+    nh_sh = os.path.join(vdir, "native_host", "reveal-host.sh")
+    if not os.path.isfile(nh_sh):
+        continue
+    name = os.path.basename(vdir)
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", name)
+    if m:
+        tup = tuple(int(x) for x in m.groups())
+        if best_tup is None or tup > best_tup:
+            best_tup = tup
+            best_path = nh_sh
+if best_path is None:
+    best_mt = -1.0
+    for vdir in glob.glob(os.path.join(root, "*")):
+        nh_sh = os.path.join(vdir, "native_host", "reveal-host.sh")
+        if not os.path.isfile(nh_sh):
+            continue
+        try:
+            mt = os.path.getmtime(vdir)
+        except OSError:
+            continue
+        if mt > best_mt:
+            best_mt = mt
+            best_path = nh_sh
+if best_path:
+    print(best_path)
+`;
+
 let selectedExtensions = [];
 let customExtensions = [];
 
@@ -434,7 +467,7 @@ function buildNativeHostOneShotBash(os) {
           '# --- Same numbered steps as Settings (OS = Linux) ---',
           '# 1. Enter Extension ID in Aria2Chrome Options (top of Local helper section).',
           '# 2. Confirm paths under Files (Chromium vs Chrome if you use Chromium).',
-          '# 3. Paste and run this script: picks newest version folder, overwrites host files + manifest (re-run safe).',
+          '# 3. Paste and run this script (entire block): picks highest semver version folder, overwrites host + manifest (re-run safe).',
           '# 4. Enable "Use installed local helper", Save Settings, reload the extension.',
           '# --- Install ---'
         ]
@@ -442,7 +475,7 @@ function buildNativeHostOneShotBash(os) {
           '# --- Same numbered steps as Settings (OS = macOS) ---',
           '# 1. chrome://extensions or edge://extensions — copy Extension ID into Aria2Chrome Options.',
           '# 2. Confirm paths under Files.',
-          '# 3. Run this script in Terminal: picks newest version folder, overwrites host files + manifest (re-run safe).',
+          '# 3. Run this script in Terminal (entire block): picks highest semver version folder, overwrites host + manifest (re-run safe).',
           '# 4. Enable "Use installed local helper", Save Settings, reload the extension.',
           '# --- Install ---'
         ];
@@ -462,8 +495,10 @@ PY
     '#!/usr/bin/env bash',
     ...stepComments,
     '# Writes native_host launcher + Python host from embedded copies (always overwrites = safe re-run + upgrades),',
-    '# then manifest JSON. Picks newest …/Extensions/<id>/<ver>/native_host/ when multiple version dirs exist.',
-    '# Requires python3. Stale native_host files in older <ver> folders are removed so Chrome only uses one copy.',
+    '# then manifest JSON. Resolves …/Extensions/<id>/<ver>/native_host/ by highest semver (x.y.z), else mtime.',
+    '# Copy the entire script in one paste — partial paste can break embedded heredocs.',
+    '# Requires python3 for manifest JSON; semver resolution uses python3 when available. Stale native_host',
+    '# files in older <ver> folders are removed so Chrome only uses one copy.',
     'set -euo pipefail',
     `MANIFEST=${bashSingleQuoted(manifestPath)}`,
     `LAUNCHER=${bashSingleQuoted(reveal)}`,
@@ -472,12 +507,22 @@ PY
     'EXT_ID_ROOT="$(dirname "$(dirname "$(dirname "$LAUNCHER")")")"',
     'if [[ "${ARIA2_TRY_RESOLVE_VERSION:-0}" == "1" ]] && [[ -d "$EXT_ID_ROOT" ]]; then',
     '  BEST_LAUNCHER=""',
-    '  BEST_MT=0',
-    '  for vdir in "$EXT_ID_ROOT"/*; do',
-    '    [[ -d "$vdir/native_host" ]] || continue',
-    '    MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
-    '    if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
-    '  done',
+    '  export EXT_ID_ROOT',
+    '  if command -v python3 >/dev/null 2>&1; then',
+    '    BEST_LAUNCHER="$(python3 <<\'PY\'',
+    ...NATIVE_HOST_RESOLVE_LAUNCHER_PY.trimEnd().split('\n'),
+    'PY',
+    '    )"',
+    '  fi',
+    '  if [[ -z "$BEST_LAUNCHER" ]]; then',
+    '    BEST_MT=0',
+    '    for vdir in "$EXT_ID_ROOT"/*; do',
+    '      [[ -d "$vdir/native_host" ]] || continue',
+    '      [[ -f "$vdir/native_host/reveal-host.sh" ]] || continue',
+    '      MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
+    '      if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
+    '    done',
+    '  fi',
     '  if [[ -n "$BEST_LAUNCHER" ]]; then',
     '    LAUNCHER="$BEST_LAUNCHER"',
     '    PYTHON="${LAUNCHER%/*}/aria2chrome_native_host.py"',
@@ -551,7 +596,7 @@ function buildNativeHostOneShotPowerShell() {
   return `# --- Same numbered steps as Settings (OS = Windows) ---
 # 1. Enter Extension ID in Aria2Chrome Options (top of Local helper section).
 # 2. Confirm paths under Files in Options.
-# 3. Run this script: resolves newest version folder, overwrites embedded host files + manifest (re-run / upgrade safe).
+# 3. Run this script: resolves highest semver version folder, overwrites embedded host files + manifest (re-run / upgrade safe).
 # 4. Enable "Use installed local helper", Save Settings, reload the extension.
 # --- Install ---
 $ErrorActionPreference = "Stop"
@@ -571,14 +616,33 @@ $BatB64 = "${batB64}"
 $ExtIdRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $Launcher))
 if ($TryResolveVersion -and (Test-Path -LiteralPath $ExtIdRoot)) {
   $bestLauncher = $null
-  $bestMt = [DateTime]::MinValue
+  $bestVer = $null
   Get-ChildItem -LiteralPath $ExtIdRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
     $nh = Join-Path $_.FullName "native_host"
     if (-not (Test-Path -LiteralPath $nh -PathType Container)) { return }
     $l = Join-Path $nh "reveal-host.bat"
-    if ($_.LastWriteTimeUtc -gt $bestMt) {
-      $bestMt = $_.LastWriteTimeUtc
-      $bestLauncher = $l
+    if (-not (Test-Path -LiteralPath $l)) { return }
+    if ($_.Name -match '^\\d+\\.\\d+\\.\\d+$') {
+      try {
+        $v = [version]$_.Name
+        if ($null -eq $bestVer -or $v -gt $bestVer) {
+          $bestVer = $v
+          $bestLauncher = $l
+        }
+      } catch {}
+    }
+  }
+  if ($null -eq $bestLauncher) {
+    $bestMt = [DateTime]::MinValue
+    Get-ChildItem -LiteralPath $ExtIdRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+      $nh = Join-Path $_.FullName "native_host"
+      if (-not (Test-Path -LiteralPath $nh -PathType Container)) { return }
+      $l = Join-Path $nh "reveal-host.bat"
+      if (-not (Test-Path -LiteralPath $l)) { return }
+      if ($_.LastWriteTimeUtc -gt $bestMt) {
+        $bestMt = $_.LastWriteTimeUtc
+        $bestLauncher = $l
+      }
     }
   }
   if ($null -ne $bestLauncher) {
