@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1>⚙️ Aria2Chrome Settings</h1>
-      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.2</p>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.3</p>
       <div class="header-theme-row">
         <label for="optionsTheme" class="theme-label">Appearance</label>
         <select id="optionsTheme" title="Options page theme">
@@ -145,6 +145,7 @@
           <span class="native-host-browser-label">Show folder paths for:</span>
           <label class="radio-inline"><input type="radio" name="nativeHostBrowser" value="chrome" checked> Google Chrome</label>
           <label class="radio-inline"><input type="radio" name="nativeHostBrowser" value="edge"> Microsoft Edge</label>
+          <label class="radio-inline" id="nativeHostBrowserChromiumWrap" hidden><input type="radio" name="nativeHostBrowser" value="chromium"> Chromium (Linux)</label>
         </div>
         <input type="hidden" id="nativeHostOsActive" value="macos" autocomplete="off">
         <p class="hook-note" style="margin-top: 8px;">Tabs pick OS for the install script and <strong>Files</strong> paths (.sh / .bat, directories).</p>

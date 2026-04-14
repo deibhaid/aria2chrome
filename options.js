@@ -85,6 +85,7 @@ async function loadSettings() {
     'showNotifications',
     'nativeRevealEnabled',
     'nativeHostManifestOs',
+    'nativeHostManifestBrowser',
     'nativeHostManifestUsername',
     'nativeHostManifestExtensionId',
     'maxConcurrentDownloads',
@@ -164,10 +165,27 @@ async function loadSettings() {
   const osVal =
     osSaved === 'windows' || osSaved === 'linux' || osSaved === 'macos' ? osSaved : detectNativeHostOs();
   setNativeHostOsChoice(osVal, { skipLayout: true });
+  applySavedNativeHostBrowserChoice(result.nativeHostManifestBrowser);
   updateNativeHostLayout();
   
   // Render extension checkboxes
   renderExtensions();
+}
+
+/** Restore chrome | edge | chromium from storage (chromium only valid on Linux). */
+function applySavedNativeHostBrowserChoice(saved) {
+  const chromeRadio = document.querySelector('input[name="nativeHostBrowser"][value="chrome"]');
+  const edgeRadio = document.querySelector('input[name="nativeHostBrowser"][value="edge"]');
+  const chromiumRadio = document.querySelector('input[name="nativeHostBrowser"][value="chromium"]');
+  if (!chromeRadio || !edgeRadio) return;
+  const os = getNativeHostOsChoice();
+  if (saved === 'chromium' && os === 'linux' && chromiumRadio) {
+    chromiumRadio.checked = true;
+  } else if (saved === 'edge') {
+    edgeRadio.checked = true;
+  } else {
+    chromeRadio.checked = true;
+  }
 }
 
 function buildNativeHostManifestDraft() {
@@ -222,6 +240,7 @@ function setNativeHostOsChoice(os, opts = {}) {
     else shell.textContent = o === 'linux' ? 'Shell: bash (Linux)' : 'Shell: bash (macOS)';
   }
   if (!opts.skipLayout) updateNativeHostLayout();
+  else syncNativeHostChromiumOptionVisibility();
 }
 
 /** Placeholder preview when username/ID are empty — varies by selected OS. */
@@ -261,7 +280,10 @@ function getNativeHostPlaceholderPreviewText() {
 }
 
 function getNativeHostBrowserChoice() {
-  return document.querySelector('input[name="nativeHostBrowser"]:checked')?.value === 'edge' ? 'edge' : 'chrome';
+  const v = document.querySelector('input[name="nativeHostBrowser"]:checked')?.value;
+  if (v === 'edge') return 'edge';
+  if (v === 'chromium') return 'chromium';
+  return 'chrome';
 }
 
 /**
@@ -288,9 +310,13 @@ function buildStandardNativeHostRevealPathFor(username, extensionId, browser, os
       ? `/Users/${u}/Library/Application Support/Microsoft Edge/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`
       : `/Users/${u}/Library/Application Support/Google/Chrome/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`;
   }
-  return browser === 'edge'
-    ? `/home/${u}/.config/microsoft-edge/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`
-    : `/home/${u}/.config/google-chrome/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`;
+  if (browser === 'edge') {
+    return `/home/${u}/.config/microsoft-edge/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`;
+  }
+  if (browser === 'chromium') {
+    return `/home/${u}/.config/chromium/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`;
+  }
+  return `/home/${u}/.config/google-chrome/Default/Extensions/${id}/${ver}/native_host/reveal-host.sh`;
 }
 
 function buildStandardNativeHostRevealPath(username, extensionId, browser) {
@@ -318,10 +344,12 @@ function buildNativeMessagingHostsManifestFilePathFor(username, browser, os) {
         : `/Users/${u}/Library/Application Support/Google/Chrome/NativeMessagingHosts`;
     return `${base}/com.aria2chrome.reveal.json`;
   }
-  const base =
-    browser === 'edge'
-      ? `/home/${u}/.config/microsoft-edge/NativeMessagingHosts`
-      : `/home/${u}/.config/google-chrome/NativeMessagingHosts`;
+  let base = `/home/${u}/.config/google-chrome/NativeMessagingHosts`;
+  if (browser === 'edge') {
+    base = `/home/${u}/.config/microsoft-edge/NativeMessagingHosts`;
+  } else if (browser === 'chromium') {
+    base = `/home/${u}/.config/chromium/NativeMessagingHosts`;
+  }
   return `${base}/com.aria2chrome.reveal.json`;
 }
 
@@ -633,14 +661,16 @@ async function persistNativeHostManifestDraft() {
     await chrome.storage.sync.remove([
       'nativeHostManifestUsername',
       'nativeHostManifestExtensionId',
-      'nativeHostManifestRevealPath'
+      'nativeHostManifestRevealPath',
+      'nativeHostManifestBrowser'
     ]);
     return;
   }
   await chrome.storage.sync.set({
     nativeHostManifestUsername: username,
     nativeHostManifestExtensionId: id,
-    nativeHostManifestOs: getNativeHostOsChoice()
+    nativeHostManifestOs: getNativeHostOsChoice(),
+    nativeHostManifestBrowser: getNativeHostBrowserChoice()
   });
   await chrome.storage.sync.remove(['nativeHostManifestRevealPath']);
 }
@@ -734,7 +764,22 @@ function updateNativeHostPythonPreview() {
   pre.textContent = NATIVE_HOST_PY_EMBED.trimEnd();
 }
 
+function syncNativeHostChromiumOptionVisibility() {
+  const wrap = document.getElementById('nativeHostBrowserChromiumWrap');
+  if (!wrap) return;
+  const isLinux = getNativeHostOsChoice() === 'linux';
+  wrap.hidden = !isLinux;
+  if (!isLinux) {
+    const cr = document.querySelector('input[name="nativeHostBrowser"][value="chromium"]');
+    if (cr && cr.checked) {
+      const ch = document.querySelector('input[name="nativeHostBrowser"][value="chrome"]');
+      if (ch) ch.checked = true;
+    }
+  }
+}
+
 function updateNativeHostLayout() {
+  syncNativeHostChromiumOptionVisibility();
   const edge = document.querySelector('input[name="nativeHostBrowser"]:checked')?.value === 'edge';
   document.querySelectorAll('.path-chrome').forEach((el) => {
     el.hidden = edge;
@@ -1085,12 +1130,14 @@ function resetSettings() {
     if (nu) nu.value = '';
     if (nid) nid.value = '';
     setNativeHostOsChoice(detectNativeHostOs(), { skipLayout: true });
+    applySavedNativeHostBrowserChoice('chrome');
     updateNativeHostLayout();
     chrome.storage.sync.remove([
       'nativeHostManifestUsername',
       'nativeHostManifestExtensionId',
       'nativeHostManifestRevealPath',
-      'nativeHostManifestOs'
+      'nativeHostManifestOs',
+      'nativeHostManifestBrowser'
     ]);
     
     selectedExtensions = [...DEFAULT_EXTENSIONS];
@@ -1238,7 +1285,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const os = btn.getAttribute('data-native-host-os');
       if (!os) return;
       setNativeHostOsChoice(os);
-      void chrome.storage.sync.set({ nativeHostManifestOs: getNativeHostOsChoice() });
+      void chrome.storage.sync.set({
+        nativeHostManifestOs: getNativeHostOsChoice(),
+        nativeHostManifestBrowser: getNativeHostBrowserChoice()
+      });
     });
   });
   document.querySelectorAll('.copy-static-path-btn').forEach((btn) => {
