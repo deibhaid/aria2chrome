@@ -514,20 +514,43 @@ function bashSingleQuoted(s) {
   return "'" + String(s).replace(/'/g, "'\"'\"'") + "'";
 }
 
+/**
+ * Bash: assign a base64 string via many short printf chunks (single multi-KB lines wrap in terminals and corrupt pastes).
+ */
+function bashAssignB64ViaPrintfChunks(varName, b64) {
+  const CHUNK = 72;
+  const chunks = [];
+  for (let i = 0; i < b64.length; i += CHUNK) {
+    chunks.push(bashSingleQuoted(b64.slice(i, i + CHUNK)));
+  }
+  if (chunks.length === 0) {
+    return [`${varName}=''`];
+  }
+  if (chunks.length === 1) {
+    return [`${varName}="$(printf '%s' ${chunks[0]})"`];
+  }
+  const lines = [`${varName}="$(printf '%s' \\`];
+  for (let j = 0; j < chunks.length - 1; j++) {
+    lines.push(`  ${chunks[j]} \\`);
+  }
+  lines.push(`  ${chunks[chunks.length - 1]})"`);
+  return lines;
+}
+
 /** Write embedded native_host .py and .sh via base64 + short Python heredoc (multi-KB source heredocs break copy/paste in some terminals). */
 function buildNativeHostBashWritePayloadLines() {
   const b64Py = typeof btoa === 'function' ? btoa(NATIVE_HOST_PY_EMBED) : '';
   const b64Sh = typeof btoa === 'function' ? btoa(NATIVE_HOST_SH_EMBED) : '';
   return [
-    '# Write native host files: base64 + short Python (large inline heredocs are fragile when pasted).',
-    `B64_PY=${bashSingleQuoted(b64Py)}`,
-    `B64_SH=${bashSingleQuoted(b64Sh)}`,
+    '# Write native host files: base64 + short Python (base64 split across short lines so terminals do not wrap-merge).',
+    ...bashAssignB64ViaPrintfChunks('B64_PY', b64Py),
+    ...bashAssignB64ViaPrintfChunks('B64_SH', b64Sh),
     'export B64_PY B64_SH PYTHON LAUNCHER',
     "python3 <<'PY'",
     'import base64, os, pathlib',
     'py, sh = os.environ["PYTHON"], os.environ["LAUNCHER"]',
-    'pathlib.Path(py).write_bytes(base64.b64decode(os.environ["B64_PY"]))',
-    'pathlib.Path(sh).write_bytes(base64.b64decode(os.environ["B64_SH"]))',
+    'pathlib.Path(py).write_bytes(base64.b64decode("".join(os.environ["B64_PY"].split())))',
+    'pathlib.Path(sh).write_bytes(base64.b64decode("".join(os.environ["B64_SH"].split())))',
     'os.chmod(py, 0o755)',
     'os.chmod(sh, 0o755)',
     'PY'
