@@ -32,22 +32,23 @@ const NATIVE_HOST_PY_EMBED = "#!/usr/bin/env python3\n\"\"\"\nChrome Native Mess
 const NATIVE_HOST_SH_EMBED = "#!/bin/bash\n# Wrapper so Chrome Native Messaging \"path\" is a single executable (see README).\nexec \"$(dirname \"$0\")/aria2chrome_native_host.py\"\n";
 const NATIVE_HOST_BAT_EMBED = "@echo off\nREM Native Messaging wrapper for Chrome on Windows (single executable path in manifest).\npython \"%~dp0aria2chrome_native_host.py\"\n";
 
-/** Bash installer: pick best reveal-host.sh — highest semver x.y.z, else newest mtime. */
+/** Bash installer: pick install target — highest semver x.y.z (even if native_host/ missing), else mtime of dirs that already have reveal-host.sh. */
 const NATIVE_HOST_RESOLVE_LAUNCHER_PY = String.raw`import os, re, glob
 root = os.environ.get("EXT_ID_ROOT", "")
 best_path = None
 best_tup = None
 for vdir in sorted(glob.glob(os.path.join(root, "*"))):
-    nh_sh = os.path.join(vdir, "native_host", "reveal-host.sh")
-    if not os.path.isfile(nh_sh):
+    if not os.path.isdir(vdir):
         continue
     name = os.path.basename(vdir)
     m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", name)
-    if m:
-        tup = tuple(int(x) for x in m.groups())
-        if best_tup is None or tup > best_tup:
-            best_tup = tup
-            best_path = nh_sh
+    if not m:
+        continue
+    tup = tuple(int(x) for x in m.groups())
+    nh_sh = os.path.join(vdir, "native_host", "reveal-host.sh")
+    if best_tup is None or tup > best_tup:
+        best_tup = tup
+        best_path = nh_sh
 if best_path is None:
     best_mt = -1.0
     for vdir in glob.glob(os.path.join(root, "*")):
@@ -497,6 +498,7 @@ PY
     '# Writes native_host launcher + Python host from embedded copies (always overwrites = safe re-run + upgrades),',
     '# then manifest JSON. Resolves …/Extensions/<id>/<ver>/native_host/ by highest semver (x.y.z), else mtime.',
     '# Copy the entire script in one paste — partial paste can break embedded heredocs.',
+    '# Resolver script is written to a temp file (avoids fragile nested $(python3 <<PY) pastes).',
     '# Requires python3 for manifest JSON; semver resolution uses python3 when available. Stale native_host',
     '# files in older <ver> folders are removed so Chrome only uses one copy.',
     'set -euo pipefail',
@@ -509,10 +511,12 @@ PY
     '  BEST_LAUNCHER=""',
     '  export EXT_ID_ROOT',
     '  if command -v python3 >/dev/null 2>&1; then',
-    '    BEST_LAUNCHER="$(python3 <<\'PY\'',
+    '    RESOLVE_TMP="${TMPDIR:-/tmp}/aria2chrome_resolve_$$.py"',
+    '    cat > "$RESOLVE_TMP" <<\'RESOLVE_PY\'',
     ...NATIVE_HOST_RESOLVE_LAUNCHER_PY.trimEnd().split('\n'),
-    'PY',
-    '    )"',
+    'RESOLVE_PY',
+    '    BEST_LAUNCHER="$(python3 "$RESOLVE_TMP")"',
+    '    rm -f "$RESOLVE_TMP"',
     '  fi',
     '  if [[ -z "$BEST_LAUNCHER" ]]; then',
     '    BEST_MT=0',
@@ -618,16 +622,12 @@ if ($TryResolveVersion -and (Test-Path -LiteralPath $ExtIdRoot)) {
   $bestLauncher = $null
   $bestVer = $null
   Get-ChildItem -LiteralPath $ExtIdRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    $nh = Join-Path $_.FullName "native_host"
-    if (-not (Test-Path -LiteralPath $nh -PathType Container)) { return }
-    $l = Join-Path $nh "reveal-host.bat"
-    if (-not (Test-Path -LiteralPath $l)) { return }
     if ($_.Name -match '^\\d+\\.\\d+\\.\\d+$') {
       try {
         $v = [version]$_.Name
         if ($null -eq $bestVer -or $v -gt $bestVer) {
           $bestVer = $v
-          $bestLauncher = $l
+          $bestLauncher = Join-Path (Join-Path $_.FullName "native_host") "reveal-host.bat"
         }
       } catch {}
     }
