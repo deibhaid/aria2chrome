@@ -514,6 +514,26 @@ function bashSingleQuoted(s) {
   return "'" + String(s).replace(/'/g, "'\"'\"'") + "'";
 }
 
+/** Write embedded native_host .py and .sh via base64 + short Python heredoc (multi-KB source heredocs break copy/paste in some terminals). */
+function buildNativeHostBashWritePayloadLines() {
+  const b64Py = typeof btoa === 'function' ? btoa(NATIVE_HOST_PY_EMBED) : '';
+  const b64Sh = typeof btoa === 'function' ? btoa(NATIVE_HOST_SH_EMBED) : '';
+  return [
+    '# Write native host files: base64 + short Python (large inline heredocs are fragile when pasted).',
+    `B64_PY=${bashSingleQuoted(b64Py)}`,
+    `B64_SH=${bashSingleQuoted(b64Sh)}`,
+    'export B64_PY B64_SH PYTHON LAUNCHER',
+    "python3 <<'PY'",
+    'import base64, os, pathlib',
+    'py, sh = os.environ["PYTHON"], os.environ["LAUNCHER"]',
+    'pathlib.Path(py).write_bytes(base64.b64decode(os.environ["B64_PY"]))',
+    'pathlib.Path(sh).write_bytes(base64.b64decode(os.environ["B64_SH"]))',
+    'os.chmod(py, 0o755)',
+    'os.chmod(sh, 0o755)',
+    'PY'
+  ];
+}
+
 /**
  * One pasteable script: mkdir, write host JSON, chmod launcher + Python helper.
  * @param {'macos'|'linux'} os
@@ -566,11 +586,11 @@ PY
     ...stepComments,
     '# Writes native_host launcher + Python host from embedded copies (always overwrites = safe re-run + upgrades),',
     '# then manifest JSON. Resolves …/Extensions/<id>/<ver>/native_host/ by highest semver (x.y.z), else mtime.',
-    '# Copy the entire script in one paste — partial paste can break embedded heredocs.',
+    '# Copy the entire script in one paste — partial paste can break the script; payloads use base64 (not huge heredocs).',
     ...(os === 'linux'
       ? [
           '# Linux: semver uses GNU sort -V only (no resolver heredoc — avoids terminal paste corruption).',
-          '# Requires python3 for manifest JSON only. Stale native_host files in older <ver> folders are removed.'
+          '# Requires python3 (payload base64 decode + manifest JSON). Stale native_host files in older <ver> folders are removed.'
         ]
       : [
           '# macOS: semver resolver is a small temp Python file (BSD sort has no reliable -V).',
@@ -588,13 +608,7 @@ PY
     'EXT_ID="$(basename "$EXT_ID_ROOT")"',
     'mkdir -p "$(dirname "$MANIFEST")" "$(dirname "$LAUNCHER")"',
     '# Always re-write embedded payloads (idempotent; picks up Aria2Chrome host changes on re-run).',
-    `cat > "$PYTHON" <<'ARIA2HEREDOC_PY'`,
-    NATIVE_HOST_PY_EMBED,
-    'ARIA2HEREDOC_PY',
-    `cat > "$LAUNCHER" <<'ARIA2HEREDOC_SH'`,
-    NATIVE_HOST_SH_EMBED,
-    'ARIA2HEREDOC_SH',
-    'chmod +x "$PYTHON" "$LAUNCHER"',
+    ...buildNativeHostBashWritePayloadLines(),
     '# Remove Aria2Chrome hook files from older …/Extensions/<id>/<ver>/native_host/ after Chrome updates.',
     'BEST_VER_DIR="$(cd "$(dirname "$LAUNCHER")/.." && pwd -P)"',
     'if [[ -d "$EXT_ID_ROOT" ]]; then',
@@ -627,9 +641,13 @@ PY
     'echo "  $LAUNCHER"',
     'echo "Launcher + Python helper are executable."',
     'echo ""',
-    'echo "Press Enter to dismiss (keeps this window open after .command or Run Script)."',
-    '# Prefer controlling terminal when stdin is not the TTY (double-click .command, Shortcuts); else wait.',
-    'read -r _ </dev/tty 2>/dev/null || read -r _ || sleep 30',
+    ...(os === 'linux'
+      ? []
+      : [
+          'echo "Press Enter to dismiss (keeps this window open after .command or Run Script)."',
+          '# Prefer controlling terminal when stdin is not the TTY (double-click .command, Shortcuts); else wait.',
+          'read -r _ </dev/tty 2>/dev/null || read -r _ || sleep 30'
+        ]),
     ''
   ].join('\n');
 }
