@@ -52,9 +52,12 @@ for vdir in sorted(glob.glob(os.path.join(root, "*"))):
 if best_path is None:
     best_mt = -1.0
     for vdir in glob.glob(os.path.join(root, "*")):
-        nh_sh = os.path.join(vdir, "native_host", "reveal-host.sh")
-        if not os.path.isfile(nh_sh):
+        if not os.path.isdir(vdir):
             continue
+        name = os.path.basename(vdir)
+        if not re.match(r"^(\d+)\.(\d+)\.(\d+)$", name):
+            continue
+        nh_sh = os.path.join(vdir, "native_host", "reveal-host.sh")
         try:
             mt = os.path.getmtime(vdir)
         except OSError:
@@ -66,7 +69,7 @@ if best_path:
     print(best_path)
 `;
 
-/** Linux: no resolver heredoc — GNU sort -V + bash; mtime fallback matches dirs with reveal-host.sh. */
+/** Linux: no resolver heredoc — GNU sort -V + bash; mtime fallback uses semver dirs only (need not have native_host yet). */
 function buildLinuxNativeHostResolveBashLines() {
   return [
     '  BEST_LAUNCHER=""',
@@ -90,8 +93,9 @@ function buildLinuxNativeHostResolveBashLines() {
     '    shopt -s nullglob',
     '    BEST_MT=0',
     '    for vdir in "$EXT_ID_ROOT"/*; do',
-    '      [[ -d "$vdir/native_host" ]] || continue',
-    '      [[ -f "$vdir/native_host/reveal-host.sh" ]] || continue',
+    '      [[ -d "$vdir" ]] || continue',
+    '      _bn=$(basename "$vdir")',
+    '      [[ "$_bn" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || continue',
     '      MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
     '      if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
     '    done',
@@ -121,8 +125,9 @@ function buildMacosNativeHostResolveBashLines() {
     '    shopt -s nullglob',
     '    BEST_MT=0',
     '    for vdir in "$EXT_ID_ROOT"/*; do',
-    '      [[ -d "$vdir/native_host" ]] || continue',
-    '      [[ -f "$vdir/native_host/reveal-host.sh" ]] || continue',
+    '      [[ -d "$vdir" ]] || continue',
+    '      _bn=$(basename "$vdir")',
+    '      [[ "$_bn" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || continue',
     '      MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
     '      if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
     '    done',
@@ -731,13 +736,10 @@ if ($TryResolveVersion -and (Test-Path -LiteralPath $ExtIdRoot)) {
   if ($null -eq $bestLauncher) {
     $bestMt = [DateTime]::MinValue
     Get-ChildItem -LiteralPath $ExtIdRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-      $nh = Join-Path $_.FullName "native_host"
-      if (-not (Test-Path -LiteralPath $nh -PathType Container)) { return }
-      $l = Join-Path $nh "reveal-host.bat"
-      if (-not (Test-Path -LiteralPath $l)) { return }
+      if ($_.Name -notmatch '^\\d+\\.\\d+\\.\\d+$') { return }
       if ($_.LastWriteTimeUtc -gt $bestMt) {
         $bestMt = $_.LastWriteTimeUtc
-        $bestLauncher = $l
+        $bestLauncher = Join-Path (Join-Path $_.FullName "native_host") "reveal-host.bat"
       }
     }
   }
