@@ -32,7 +32,7 @@ const NATIVE_HOST_PY_EMBED = "#!/usr/bin/env python3\n\"\"\"\nChrome Native Mess
 const NATIVE_HOST_SH_EMBED = "#!/bin/bash\n# Wrapper so Chrome Native Messaging \"path\" is a single executable (see README).\nexec \"$(dirname \"$0\")/aria2chrome_native_host.py\"\n";
 const NATIVE_HOST_BAT_EMBED = "@echo off\nREM Native Messaging wrapper for Chrome on Windows (single executable path in manifest).\npython \"%~dp0aria2chrome_native_host.py\"\n";
 
-/** Bash installer: pick install target — highest semver x.y.z (even if native_host/ missing), else mtime of dirs that already have reveal-host.sh. */
+/** macOS bash installer only: semver + mtime (same logic as Linux sort -V path). Embedded as temp .py — Linux uses pure bash instead (no heredoc). */
 const NATIVE_HOST_RESOLVE_LAUNCHER_PY = String.raw`import os, re, glob
 root = os.environ.get("EXT_ID_ROOT", "")
 best_path = None
@@ -65,6 +65,75 @@ if best_path is None:
 if best_path:
     print(best_path)
 `;
+
+/** Linux: no resolver heredoc — GNU sort -V + bash; mtime fallback matches dirs with reveal-host.sh. */
+function buildLinuxNativeHostResolveBashLines() {
+  return [
+    '  BEST_LAUNCHER=""',
+    '  export EXT_ID_ROOT',
+    '  if command -v sort >/dev/null 2>&1 && [[ "$(printf \'%s\\n\' \'2\' \'10\' | sort -V | head -1)" == "2" ]]; then',
+    '    shopt -s nullglob',
+    '    _vers=()',
+    '    for _d in "$EXT_ID_ROOT"/*; do',
+    '      [[ -d "$_d" ]] || continue',
+    '      _bn=$(basename "$_d")',
+    '      [[ "$_bn" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || continue',
+    '      _vers+=("$_bn")',
+    '    done',
+    '    shopt -u nullglob',
+    '    if [[ ${#_vers[@]} -gt 0 ]]; then',
+    '      _best=$(printf \'%s\\n\' "${_vers[@]}" | sort -V | tail -1)',
+    '      BEST_LAUNCHER="$EXT_ID_ROOT/${_best}/native_host/reveal-host.sh"',
+    '    fi',
+    '  fi',
+    '  if [[ -z "$BEST_LAUNCHER" ]]; then',
+    '    shopt -s nullglob',
+    '    BEST_MT=0',
+    '    for vdir in "$EXT_ID_ROOT"/*; do',
+    '      [[ -d "$vdir/native_host" ]] || continue',
+    '      [[ -f "$vdir/native_host/reveal-host.sh" ]] || continue',
+    '      MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
+    '      if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
+    '    done',
+    '    shopt -u nullglob',
+    '  fi',
+    '  if [[ -n "$BEST_LAUNCHER" ]]; then',
+    '    LAUNCHER="$BEST_LAUNCHER"',
+    '    PYTHON="${LAUNCHER%/*}/aria2chrome_native_host.py"',
+    '  fi'
+  ];
+}
+
+/** macOS: temp Python file (BSD sort has no -V). */
+function buildMacosNativeHostResolveBashLines() {
+  return [
+    '  BEST_LAUNCHER=""',
+    '  export EXT_ID_ROOT',
+    '  if command -v python3 >/dev/null 2>&1; then',
+    '    RESOLVE_TMP="${TMPDIR:-/tmp}/aria2chrome_resolve_$$.py"',
+    '    cat > "$RESOLVE_TMP" <<\'RESOLVE_PY\'',
+    ...NATIVE_HOST_RESOLVE_LAUNCHER_PY.trimEnd().split('\n'),
+    'RESOLVE_PY',
+    '    BEST_LAUNCHER="$(python3 "$RESOLVE_TMP")"',
+    '    rm -f "$RESOLVE_TMP"',
+    '  fi',
+    '  if [[ -z "$BEST_LAUNCHER" ]]; then',
+    '    shopt -s nullglob',
+    '    BEST_MT=0',
+    '    for vdir in "$EXT_ID_ROOT"/*; do',
+    '      [[ -d "$vdir/native_host" ]] || continue',
+    '      [[ -f "$vdir/native_host/reveal-host.sh" ]] || continue',
+    '      MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
+    '      if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
+    '    done',
+    '    shopt -u nullglob',
+    '  fi',
+    '  if [[ -n "$BEST_LAUNCHER" ]]; then',
+    '    LAUNCHER="$BEST_LAUNCHER"',
+    '    PYTHON="${LAUNCHER%/*}/aria2chrome_native_host.py"',
+    '  fi'
+  ];
+}
 
 let selectedExtensions = [];
 let customExtensions = [];
@@ -498,9 +567,15 @@ PY
     '# Writes native_host launcher + Python host from embedded copies (always overwrites = safe re-run + upgrades),',
     '# then manifest JSON. Resolves …/Extensions/<id>/<ver>/native_host/ by highest semver (x.y.z), else mtime.',
     '# Copy the entire script in one paste — partial paste can break embedded heredocs.',
-    '# Resolver script is written to a temp file (avoids fragile nested $(python3 <<PY) pastes).',
-    '# Requires python3 for manifest JSON; semver resolution uses python3 when available. Stale native_host',
-    '# files in older <ver> folders are removed so Chrome only uses one copy.',
+    ...(os === 'linux'
+      ? [
+          '# Linux: semver uses GNU sort -V only (no resolver heredoc — avoids terminal paste corruption).',
+          '# Requires python3 for manifest JSON only. Stale native_host files in older <ver> folders are removed.'
+        ]
+      : [
+          '# macOS: semver resolver is a small temp Python file (BSD sort has no reliable -V).',
+          '# Requires python3 for manifest JSON and resolver when available. Stale native_host files removed.'
+        ]),
     'set -euo pipefail',
     `MANIFEST=${bashSingleQuoted(manifestPath)}`,
     `LAUNCHER=${bashSingleQuoted(reveal)}`,
@@ -508,29 +583,7 @@ PY
     `ARIA2_TRY_RESOLVE_VERSION=${tryResolve}`,
     'EXT_ID_ROOT="$(dirname "$(dirname "$(dirname "$LAUNCHER")")")"',
     'if [[ "${ARIA2_TRY_RESOLVE_VERSION:-0}" == "1" ]] && [[ -d "$EXT_ID_ROOT" ]]; then',
-    '  BEST_LAUNCHER=""',
-    '  export EXT_ID_ROOT',
-    '  if command -v python3 >/dev/null 2>&1; then',
-    '    RESOLVE_TMP="${TMPDIR:-/tmp}/aria2chrome_resolve_$$.py"',
-    '    cat > "$RESOLVE_TMP" <<\'RESOLVE_PY\'',
-    ...NATIVE_HOST_RESOLVE_LAUNCHER_PY.trimEnd().split('\n'),
-    'RESOLVE_PY',
-    '    BEST_LAUNCHER="$(python3 "$RESOLVE_TMP")"',
-    '    rm -f "$RESOLVE_TMP"',
-    '  fi',
-    '  if [[ -z "$BEST_LAUNCHER" ]]; then',
-    '    BEST_MT=0',
-    '    for vdir in "$EXT_ID_ROOT"/*; do',
-    '      [[ -d "$vdir/native_host" ]] || continue',
-    '      [[ -f "$vdir/native_host/reveal-host.sh" ]] || continue',
-    '      MT=$(stat -f%m "$vdir" 2>/dev/null || stat -c%Y "$vdir" 2>/dev/null || echo 0)',
-    '      if [[ "$MT" =~ ^[0-9]+$ ]] && [[ "$MT" -ge "$BEST_MT" ]]; then BEST_MT=$MT; BEST_LAUNCHER="$vdir/native_host/reveal-host.sh"; fi',
-    '    done',
-    '  fi',
-    '  if [[ -n "$BEST_LAUNCHER" ]]; then',
-    '    LAUNCHER="$BEST_LAUNCHER"',
-    '    PYTHON="${LAUNCHER%/*}/aria2chrome_native_host.py"',
-    '  fi',
+    ...(os === 'linux' ? buildLinuxNativeHostResolveBashLines() : buildMacosNativeHostResolveBashLines()),
     'fi',
     'EXT_ID="$(basename "$EXT_ID_ROOT")"',
     'mkdir -p "$(dirname "$MANIFEST")" "$(dirname "$LAUNCHER")"',
