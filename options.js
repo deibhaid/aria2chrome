@@ -607,6 +607,7 @@ PY
   return [
     '#!/usr/bin/env bash',
     ...stepComments,
+    '# Tip: Download script in Options avoids SSH/terminal paste corruption (on-screen text can look fine).',
     '# Writes native_host launcher + Python host from embedded copies (always overwrites = safe re-run + upgrades),',
     '# then manifest JSON. Resolves …/Extensions/<id>/<ver>/native_host/ by highest semver (x.y.z), else mtime.',
     '# Copy the entire script in one paste — partial paste can break the script; payloads use base64 (not huge heredocs).',
@@ -697,6 +698,7 @@ function buildNativeHostOneShotPowerShell() {
 # 3. Run this script: resolves highest semver version folder, overwrites embedded host files + manifest (re-run / upgrade safe).
 # 4. Enable "Use installed local helper", Save Settings, reload the extension.
 # --- Install ---
+# Tip: Download script in Options avoids paste corruption (on-screen text can look fine).
 $ErrorActionPreference = "Stop"
 $TryResolveVersion = ${tryResolvePs}
 try {
@@ -950,6 +952,13 @@ function updateNativeHostLayout() {
   updateNativeHostOneShotBlocks();
 }
 
+function getNativeHostOneshotDownloadFilename() {
+  const os = getNativeHostOsChoice();
+  if (os === 'windows') return 'aria2chrome-native-host-install.ps1';
+  if (os === 'linux') return 'aria2chrome-native-host-install-linux.sh';
+  return 'aria2chrome-native-host-install-macos.sh';
+}
+
 async function copyNativeHostOneshot() {
   const pre = document.getElementById('nativeHostOneShot');
   if (!pre || !pre.textContent.trim()) {
@@ -961,6 +970,30 @@ async function copyNativeHostOneshot() {
     flashNativeHostFeedback('nativeHostCopyOneshotFb', 'Copied.', false);
   } catch (e) {
     flashNativeHostFeedback('nativeHostCopyOneshotFb', 'Copy failed.', true);
+  }
+}
+
+function downloadNativeHostOneshot() {
+  const pre = document.getElementById('nativeHostOneShot');
+  if (!pre || !pre.textContent.trim()) {
+    flashNativeHostFeedback('nativeHostCopyOneshotFb', 'Nothing to download.', true);
+    return;
+  }
+  try {
+    const text = pre.textContent.replace(/\r\n/g, '\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = getNativeHostOneshotDownloadFilename();
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    flashNativeHostFeedback('nativeHostCopyOneshotFb', 'Download started.', false);
+  } catch (e) {
+    flashNativeHostFeedback('nativeHostCopyOneshotFb', 'Download failed.', true);
   }
 }
 
@@ -1457,6 +1490,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('copyNativeHostOneshotBtn')?.addEventListener('click', () => {
     void copyNativeHostOneshot();
+  });
+  document.getElementById('downloadNativeHostOneshotBtn')?.addEventListener('click', () => {
+    downloadNativeHostOneshot();
   });
   ['nativeHostUsername', 'nativeHostExtensionId'].forEach((fieldId) => {
     const el = document.getElementById(fieldId);

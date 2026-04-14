@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1>⚙️ Aria2Chrome Settings</h1>
-      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.9</p>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.10</p>
       <div class="header-theme-row">
         <label for="optionsTheme" class="theme-label">Appearance</label>
         <select id="optionsTheme" title="Options page theme">
@@ -192,8 +192,13 @@
           <h4 class="native-host-oneshot-title" id="nativeHostOneShotTitle">All-in-one install script</h4>
           <p class="hook-note native-host-oneshot-sub" id="nativeHostOneShotShellLabel">Shell: bash (macOS / Linux)</p>
           <pre id="nativeHostOneShot" class="hook-snippet native-host-oneshot" aria-label="Pasteable install script for the OS selected above"></pre>
+          <p class="hook-note native-host-oneshot-dl-hint">
+            Paste can look fine in the terminal while SSH or the shell still receives a corrupted script (long pastes are not always delivered byte-for-byte).
+            Prefer <strong>Download script</strong>, then run e.g. <code>bash ~/Downloads/aria2chrome-native-host-install-linux.sh</code> (or <code>scp</code> the file to the machine).
+          </p>
           <div class="native-host-generator-actions">
             <button type="button" id="copyNativeHostOneshotBtn" class="btn btn-secondary">Copy script</button>
+            <button type="button" id="downloadNativeHostOneshotBtn" class="btn btn-secondary">Download script</button>
             <span id="nativeHostCopyOneshotFb" class="native-host-inline-feedback" role="status" aria-live="polite"></span>
           </div>
         </div>
