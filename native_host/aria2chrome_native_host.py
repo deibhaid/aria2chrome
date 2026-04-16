@@ -3,8 +3,8 @@
 Chrome Native Messaging host: reveal a file in the file manager, or rename in place (same folder).
 
 Messages:
-  {"path": "/absolute/path/to/file"}  → reveal in Finder / Explorer / xdg-open parent
-  {"renameInPlace": {"from": "/abs/old.mp3", "to": "/abs/new.mp3"}}  → os.rename, same directory only
+  {"path": "/absolute/path/to/file"}  -> reveal in Finder / Explorer / xdg-open parent
+  {"renameInPlace": {"from": "/abs/old.mp3", "to": "/abs/new.mp3"}}  -> os.rename, same directory only
 
 Reply: {"ok": true} or {"ok": false, "error": "reason"}
 
