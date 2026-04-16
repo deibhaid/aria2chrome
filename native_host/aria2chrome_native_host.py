@@ -12,6 +12,7 @@ No network, no telemetry, stdlib only.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import platform
@@ -109,7 +110,18 @@ def rename_in_place(from_path: str, to_path: str) -> Dict[str, Any]:
         os.rename(from_norm, to_norm)
         return {"ok": True}
     except OSError as e:
-        return {"ok": False, "error": str(e)}
+        err = str(e)
+        # macOS TCC often denies Chrome's helper renames under Desktop/Downloads (EPERM/EACCES).
+        if platform.system() == "Darwin" and getattr(e, "errno", None) in (
+            errno.EPERM,
+            errno.EACCES,
+        ):
+            err += (
+                " On macOS: System Settings → Privacy & Security → Full Disk Access → add Google Chrome "
+                "(then quit and reopen Chrome), or rename in Finder, or use a download folder outside "
+                "Desktop/Downloads for aria2."
+            )
+        return {"ok": False, "error": err}
 
 
 def main() -> None:
