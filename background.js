@@ -1852,35 +1852,38 @@ async function tryNativeRevealInFolder(localPath) {
   });
 }
 
-/** Same native host; message shape {"renameInPlace":{"from":"...","to":"..."}} — same folder only (host enforces). */
+/**
+ * Same native host; message {"renameInPlace":{"from":"...","to":"..."}} — same folder only (host enforces).
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
 async function tryNativeRenameInPlace(fromPath, toPath) {
   try {
     const r = await chrome.storage.sync.get(['nativeRevealEnabled']);
     if (r.nativeRevealEnabled !== true) {
-      return false;
+      return { ok: false, error: 'Turn on "Use installed local helper" in Options and Save.' };
     }
   } catch (e) {
-    return false;
+    return { ok: false, error: 'Could not read settings' };
   }
   if (!fromPath || !toPath || typeof fromPath !== 'string' || typeof toPath !== 'string') {
-    return false;
+    return { ok: false, error: 'Internal path error' };
   }
   return new Promise((resolve) => {
     let done = false;
-    const finish = (ok) => {
+    const finish = (result) => {
       if (done) return;
       done = true;
-      resolve(ok);
+      resolve(result);
     };
     let port;
     try {
       port = chrome.runtime.connectNative('com.aria2chrome.reveal');
     } catch (e) {
-      resolve(false);
+      finish({ ok: false, error: e && e.message ? String(e.message) : 'Could not connect to native host' });
       return;
     }
     if (chrome.runtime.lastError) {
-      finish(false);
+      finish({ ok: false, error: chrome.runtime.lastError.message });
       return;
     }
     const t = setTimeout(() => {
@@ -1889,7 +1892,7 @@ async function tryNativeRenameInPlace(fromPath, toPath) {
       } catch (e) {
         /* ignore */
       }
-      finish(false);
+      finish({ ok: false, error: 'Native host did not respond in time.' });
     }, 8000);
     port.onMessage.addListener((msg) => {
       clearTimeout(t);
@@ -1898,23 +1901,30 @@ async function tryNativeRenameInPlace(fromPath, toPath) {
       } catch (e) {
         /* ignore */
       }
-      finish(msg && msg.ok === true);
+      if (msg && msg.ok === true) {
+        finish({ ok: true });
+      } else {
+        const detail =
+          msg && typeof msg.error === 'string' && msg.error.trim()
+            ? msg.error.trim()
+            : 'Host reported failure';
+        finish({ ok: false, error: detail });
+      }
     });
     port.onDisconnect.addListener(() => {
       clearTimeout(t);
       if (!done) {
         const err = chrome.runtime.lastError;
-        if (err && err.message) {
-          console.debug('[Aria2Chrome] native rename:', err.message);
-        }
-        finish(false);
+        const m = err && err.message ? err.message : 'Native host disconnected before reply';
+        console.debug('[Aria2Chrome] native rename:', m);
+        finish({ ok: false, error: m });
       }
     });
     try {
       port.postMessage({ renameInPlace: { from: fromPath, to: toPath } });
     } catch (e) {
       clearTimeout(t);
-      finish(false);
+      finish({ ok: false, error: e && e.message ? String(e.message) : 'postMessage failed' });
     }
   });
 }
@@ -1978,11 +1988,13 @@ async function renameCompletedDownload(gid, newNameRaw) {
     return { success: true, localPath: oldPath };
   }
   const newPath = joinDirFile(dir, newName);
-  const ok = await tryNativeRenameInPlace(oldPath, newPath);
-  if (!ok) {
+  const renameResult = await tryNativeRenameInPlace(oldPath, newPath);
+  if (!renameResult.ok) {
     return {
       success: false,
-      error: 'Rename failed. Check that the local helper is installed and Options are saved.'
+      error:
+        renameResult.error ||
+        'Rename failed. Re-run the install script from Options after upgrading; confirm the helper checkbox is on and Save.'
     };
   }
   downloads[gid].filePath = newPath;
