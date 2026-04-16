@@ -1852,6 +1852,145 @@ async function tryNativeRevealInFolder(localPath) {
   });
 }
 
+/** Same native host; message shape {"renameInPlace":{"from":"...","to":"..."}} — same folder only (host enforces). */
+async function tryNativeRenameInPlace(fromPath, toPath) {
+  try {
+    const r = await chrome.storage.sync.get(['nativeRevealEnabled']);
+    if (r.nativeRevealEnabled !== true) {
+      return false;
+    }
+  } catch (e) {
+    return false;
+  }
+  if (!fromPath || !toPath || typeof fromPath !== 'string' || typeof toPath !== 'string') {
+    return false;
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      resolve(ok);
+    };
+    let port;
+    try {
+      port = chrome.runtime.connectNative('com.aria2chrome.reveal');
+    } catch (e) {
+      resolve(false);
+      return;
+    }
+    if (chrome.runtime.lastError) {
+      finish(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      try {
+        port.disconnect();
+      } catch (e) {
+        /* ignore */
+      }
+      finish(false);
+    }, 8000);
+    port.onMessage.addListener((msg) => {
+      clearTimeout(t);
+      try {
+        port.disconnect();
+      } catch (e) {
+        /* ignore */
+      }
+      finish(msg && msg.ok === true);
+    });
+    port.onDisconnect.addListener(() => {
+      clearTimeout(t);
+      if (!done) {
+        const err = chrome.runtime.lastError;
+        if (err && err.message) {
+          console.debug('[Aria2Chrome] native rename:', err.message);
+        }
+        finish(false);
+      }
+    });
+    try {
+      port.postMessage({ renameInPlace: { from: fromPath, to: toPath } });
+    } catch (e) {
+      clearTimeout(t);
+      finish(false);
+    }
+  });
+}
+
+function splitPathDirBase(p) {
+  if (!p || typeof p !== 'string') return { dir: '', base: '' };
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  if (i < 0) return { dir: '', base: p };
+  return { dir: p.slice(0, i), base: p.slice(i + 1) };
+}
+
+function joinDirFile(dir, base) {
+  if (!dir) return base;
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return dir.endsWith(sep) ? dir + base : dir + sep + base;
+}
+
+async function renameCompletedDownload(gid, newNameRaw) {
+  try {
+    const r = await chrome.storage.sync.get(['nativeRevealEnabled']);
+    if (r.nativeRevealEnabled !== true) {
+      return {
+        success: false,
+        error: 'Turn on "Use installed local helper" in Options to rename files on disk.'
+      };
+    }
+  } catch (e) {
+    return { success: false, error: 'Could not read settings' };
+  }
+  const newName = String(newNameRaw || '').trim();
+  if (!newName) {
+    return { success: false, error: 'Name is empty' };
+  }
+  if (/[\x00]/.test(newName) || newName === '.' || newName === '..') {
+    return { success: false, error: 'Invalid filename' };
+  }
+  if (newName.includes('/') || newName.includes('\\')) {
+    return { success: false, error: 'Use a single filename only' };
+  }
+  const download = downloads[gid];
+  if (!download) {
+    return { success: false, error: 'Download not found' };
+  }
+  if (download.status !== 'complete') {
+    return { success: false, error: 'Only completed downloads can be renamed' };
+  }
+  let oldPath = download.filePath;
+  if (download.gid) {
+    const resolved = await resolveLocalPathFromAria2(download.gid);
+    if (resolved) oldPath = resolved;
+  }
+  if (!oldPath || !String(oldPath).trim()) {
+    return { success: false, error: 'File path not available' };
+  }
+  oldPath = String(oldPath).trim();
+  const { dir, base } = splitPathDirBase(oldPath);
+  if (!dir) {
+    return { success: false, error: 'Could not determine file folder' };
+  }
+  if (base === newName) {
+    return { success: true, localPath: oldPath };
+  }
+  const newPath = joinDirFile(dir, newName);
+  const ok = await tryNativeRenameInPlace(oldPath, newPath);
+  if (!ok) {
+    return {
+      success: false,
+      error: 'Rename failed. Check that the local helper is installed and Options are saved.'
+    };
+  }
+  downloads[gid].filePath = newPath;
+  downloads[gid].filename = newName;
+  await saveDownloads();
+  return { success: true, localPath: newPath };
+}
+
 // Resolve path + copy via popup; optional "open" via aria2 custom RPC or optional local Native Messaging host.
 async function showFileInFolder(filepath, gid) {
   try {
@@ -2027,7 +2166,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         
       case 'getDownloads':
         await updateDownloadsStatus();
-        sendResponse({ downloads });
+        {
+          const nr = await chrome.storage.sync.get(['nativeRevealEnabled']);
+          sendResponse({
+            downloads,
+            nativeRevealEnabled: nr.nativeRevealEnabled === true
+          });
+        }
+        break;
+
+      case 'renameCompletedFile':
+        sendResponse(await renameCompletedDownload(request.gid, request.newName));
         break;
         
       case 'pauseDownload':

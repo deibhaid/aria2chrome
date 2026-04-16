@@ -1,6 +1,8 @@
 // Popup script for managing downloads
 
 let downloads = {};
+/** Mirrors Options → "Use installed local helper" — shows ✏️ rename when true. */
+let nativeRevealEnabled = false;
 
 // Format bytes to human-readable format
 function formatBytes(bytes) {
@@ -128,7 +130,7 @@ function renderDownloads() {
               download.status === 'active' || download.status === 'waiting' ? 
               `<button class="control-btn" data-action="pause" data-gid="${download.gid}" title="Pause">⏸️</button>` : 
               download.status === 'complete' ?
-              `<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" data-filepath="${download.filePath || ''}" title="Copy path; try aria2 open-folder RPC; optional local native helper if enabled in Options">📁</button>` :
+              `${nativeRevealEnabled ? `<button class="control-btn" data-action="renameFile" data-gid="${download.gid}" title="Rename file on disk (local helper)">✏️</button>` : ''}<button class="control-btn" data-action="showInFolder" data-gid="${download.gid}" data-filepath="${download.filePath || ''}" title="Copy path; try aria2 open-folder RPC; optional local native helper if enabled in Options">📁</button>` :
               download.status === 'queued' ?
               `<button class="control-btn" data-action="startQueued" data-gid="${download.gid || download.queueId}" title="Start Now">▶️</button>` :
               `<button class="control-btn" data-action="resume" data-gid="${download.gid}" title="${download.status === 'failed_permanently' ? 'Retry (Reset Attempts)' : 'Resume'}">▶️</button>`
@@ -197,6 +199,9 @@ function handleControlClick(event) {
       break;
     case 'showInFolder':
       showInFolder(gid, filepath, event.currentTarget);
+      break;
+    case 'renameFile':
+      renameCompletedFile(gid);
       break;
   }
 }
@@ -452,9 +457,38 @@ function refreshDownloads() {
   chrome.runtime.sendMessage({ action: 'getDownloads' }, response => {
     if (response && response.downloads) {
       downloads = response.downloads;
+      nativeRevealEnabled = response.nativeRevealEnabled === true;
       renderDownloads();
     }
   });
+}
+
+function renameCompletedFile(gid) {
+  const download = downloads[gid];
+  if (!download || download.status !== 'complete') return;
+  const fromPath = download.filePath || '';
+  const pathBase = fromPath
+    ? fromPath.replace(/^.*[/\\]/, '')
+    : '';
+  const current = (download.filename && String(download.filename).trim()) || pathBase || '';
+  const next = prompt('Rename file on disk (same folder):', current);
+  if (next == null) return;
+  const trimmed = next.trim();
+  if (!trimmed || trimmed === current) return;
+  chrome.runtime.sendMessage(
+    { action: 'renameCompletedFile', gid, newName: trimmed },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        alert(chrome.runtime.lastError.message);
+        return;
+      }
+      if (response && response.success) {
+        refreshDownloads();
+      } else {
+        alert(response?.error || 'Rename failed');
+      }
+    }
+  );
 }
 
 function clearCompletedDownloads() {
@@ -627,6 +661,13 @@ function loadInterceptionState() {
 document.addEventListener('DOMContentLoaded', () => {
   refreshDownloads();
   loadInterceptionState();
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && changes.nativeRevealEnabled) {
+      nativeRevealEnabled = changes.nativeRevealEnabled.newValue === true;
+      renderDownloads();
+    }
+  });
   
   // Set up auto-refresh
   setInterval(refreshDownloads, 1000);
