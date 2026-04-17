@@ -3037,7 +3037,8 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     const downloadInfo = downloadsToIntercept.get(delta.id);
     downloadsToIntercept.delete(delta.id);
     
-    console.log('[Aria2 Downloader] Download interrupted (as expected), adding to aria2:', downloadInfo);
+    // downloadInfo is the snapshot from onDeterminingFilename (often URL suggestion only).
+    console.log('[Aria2 Downloader] Download interrupted — stored map entry (pre-Save dialog):', downloadInfo);
     
     // Prefer name after Save dialog / Chrome's final path — not the pre-dialog suggestion we stored.
     let finalFilename = '';
@@ -3056,6 +3057,12 @@ chrome.downloads.onChanged.addListener(async (delta) => {
       }
     }
     finalFilename = basenameFromChromeDownloadPath(finalFilename) || finalFilename;
+
+    console.log('[Aria2 Downloader] Intercept resolved basename for aria2:', {
+      storedFromOnDetermining: downloadInfo.filename,
+      deltaFilename: delta.filename,
+      resolved: finalFilename
+    });
     
     // Add to aria2
     const result = await addDownload(
