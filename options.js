@@ -396,6 +396,7 @@ function getNativeHostBrowserChoice() {
 
 /**
  * Default install layout: .../Default/Extensions/<extensionId>/<manifestVersion>/native_host/reveal-host.*
+ * manifestVersion is always chrome.runtime.getManifest().version (same label as chrome://extensions Details).
  * @param {'macos'|'windows'|'linux'} os
  */
 function buildStandardNativeHostRevealPathFor(username, extensionId, browser, os) {
@@ -596,14 +597,16 @@ function buildNativeHostOneShotBash(os) {
   if (!manifestPath || !reveal) {
     return '# Could not build paths. Set username and Extension ID in Options.';
   }
-  const tryResolve = '1';
+  // Use manifest version only (chrome.runtime.getManifest in buildStandardNativeHostRevealPathFor) —
+  // do not scan the filesystem for "newest" x.y.z folders (avoids wrong profile / stale dirs).
+  const tryResolve = '0';
   const stepComments =
     os === 'linux'
       ? [
           '# --- Same numbered steps as Settings (OS = Linux) ---',
           '# 1. Enter Extension ID in Aria2Chrome Options (top of Local helper section).',
           '# 2. Confirm paths under Files (Chromium vs Chrome if you use Chromium).',
-          '# 3. Paste and run this script (entire block): picks highest semver version folder, overwrites host + manifest (re-run safe).',
+          '# 3. Paste and run this script: paths use THIS copy\'s manifest version (same # as chrome://extensions Details).',
           '# 4. Enable "Use installed local helper", Save Settings, reload the extension.',
           '# --- Install ---'
         ]
@@ -611,7 +614,7 @@ function buildNativeHostOneShotBash(os) {
           '# --- Same numbered steps as Settings (OS = macOS) ---',
           '# 1. chrome://extensions or edge://extensions — copy Extension ID into Aria2Chrome Options.',
           '# 2. Confirm paths under Files.',
-          '# 3. Run this script in Terminal (entire block): picks highest semver version folder, overwrites host + manifest (re-run safe).',
+          '# 3. Run this script in Terminal: paths use THIS copy\'s manifest version (same # as chrome://extensions Details).',
           '# 4. Enable "Use installed local helper", Save Settings, reload the extension.',
           '# --- Install ---'
         ];
@@ -632,16 +635,15 @@ PY
     ...stepComments,
     '# Tip: Download script in Options avoids SSH/terminal paste corruption (on-screen text can look fine).',
     '# Writes native_host launcher + Python host from embedded copies (always overwrites = safe re-run + upgrades),',
-    '# then manifest JSON. Resolves …/Extensions/<id>/<ver>/native_host/ by highest semver (x.y.z), else mtime.',
+    '# then manifest JSON. Target path uses …/Extensions/<id>/<manifestVersion>/native_host/ where manifestVersion',
+    '# is chrome.runtime.getManifest().version at copy time (same as chrome://extensions Details) — no disk scanning.',
     '# Copy the entire script in one paste — partial paste can break the script; payloads use base64 (not huge heredocs).',
     ...(os === 'linux'
       ? [
-          '# Linux: semver uses GNU sort -V only (no resolver heredoc — avoids terminal paste corruption).',
-          '# Requires python3 (payload base64 decode + manifest JSON). Stale native_host files in older <ver> folders are removed.'
+          '# Linux: requires python3 (payload base64 decode + manifest JSON). Stale native_host files in older <ver> folders are removed.'
         ]
       : [
-          '# macOS: semver resolver is a small temp Python file (BSD sort has no reliable -V).',
-          '# Requires python3 for manifest JSON and resolver when available. Stale native_host files removed.'
+          '# macOS: requires python3 for manifest JSON. Stale native_host files removed.'
         ]),
     'set -euo pipefail',
     `MANIFEST=${bashSingleQuoted(manifestPath)}`,
@@ -653,21 +655,15 @@ PY
     ...(os === 'linux' ? buildLinuxNativeHostResolveBashLines() : buildMacosNativeHostResolveBashLines()),
     'fi',
     'EXT_ID="$(basename "$EXT_ID_ROOT")"',
+    'EXPECTED_PKG="$(dirname "$(dirname "$LAUNCHER")")"',
+    'CURRENT_VER="$(basename "$EXPECTED_PKG")"',
+    'if [[ ! -d "$EXPECTED_PKG" ]]; then',
+    '  echo "Aria2Chrome: NOTE — package folder not present yet; creating path with mkdir -p (same version as chrome://extensions Details when you copied this script)." >&2',
+    '  echo "  $EXPECTED_PKG" >&2',
+    'fi',
     'mkdir -p "$(dirname "$MANIFEST")" "$(dirname "$LAUNCHER")"',
     '# Always re-write embedded payloads (idempotent; picks up Aria2Chrome host changes on re-run).',
     ...buildNativeHostBashWritePayloadLines(),
-    '# Remove Aria2Chrome hook files from older …/Extensions/<id>/<ver>/native_host/ after Chrome updates.',
-    'BEST_VER_DIR="$(cd "$(dirname "$LAUNCHER")/.." && pwd -P)"',
-    'if [[ -d "$EXT_ID_ROOT" ]]; then',
-    '  for ov in "$EXT_ID_ROOT"/*; do',
-    '    [[ -d "$ov" ]] || continue',
-    '    [[ "$(cd "$ov" && pwd -P)" == "$BEST_VER_DIR" ]] && continue',
-    '    nh="$ov/native_host"',
-    '    [[ -d "$nh" ]] || continue',
-    '    rm -f "$nh/reveal-host.sh" "$nh/reveal-host.bat" "$nh/aria2chrome_native_host.py" 2>/dev/null || true',
-    '    rmdir "$nh" 2>/dev/null || true',
-    '  done',
-    'fi',
     'if [[ ! -s "$PYTHON" ]] || [[ ! -s "$LAUNCHER" ]]; then',
     '  echo "Aria2Chrome: ERROR — could not install native_host files." >&2',
     '  echo "  launcher: $LAUNCHER" >&2',
@@ -677,6 +673,18 @@ PY
     'if ! command -v python3 >/dev/null 2>&1; then',
     '  echo "Aria2Chrome: ERROR — python3 not found. Install Python 3." >&2',
     '  exit 1',
+    'fi',
+    '# Leave only this manifest version under …/Extensions/<id>/ (removes other x.y.z unpack dirs).',
+    'echo "Aria2Chrome: pruning old version folders under $EXT_ID_ROOT (keeping $CURRENT_VER only)…" >&2',
+    'if [[ -d "$EXT_ID_ROOT" ]]; then',
+    '  for ov in "$EXT_ID_ROOT"/*; do',
+    '    [[ -d "$ov" ]] || continue',
+    '    _bn=$(basename "$ov")',
+    '    [[ "$_bn" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue',
+    '    [[ "$_bn" == "$CURRENT_VER" ]] && continue',
+    '    echo "Aria2Chrome: removing old extension version folder: $ov" >&2',
+    '    rm -rf "$ov"',
+    '  done',
     'fi',
     'export EXT_ID LAUNCHER',
     jsonViaPython,
@@ -714,11 +722,11 @@ function buildNativeHostOneShotPowerShell() {
   const pyPath = reveal.replace(/reveal-host\.bat$/i, 'aria2chrome_native_host.py');
   const pyB64 = utf8ToBase64(NATIVE_HOST_PY_EMBED);
   const batB64 = utf8ToBase64(NATIVE_HOST_BAT_EMBED);
-  const tryResolvePs = '$true';
+  const tryResolvePs = '$false';
   return `# --- Same numbered steps as Settings (OS = Windows) ---
 # 1. Enter Extension ID in Aria2Chrome Options (top of Local helper section).
 # 2. Confirm paths under Files in Options.
-# 3. Run this script: resolves highest semver version folder, overwrites embedded host files + manifest (re-run / upgrade safe).
+# 3. Run this script: paths use THIS copy's manifest version (same # as chrome://extensions Details); overwrites host + manifest.
 # 4. Enable "Use installed local helper", Save Settings, reload the extension.
 # --- Install ---
 # Tip: Download script in Options avoids paste corruption (on-screen text can look fine).
@@ -766,6 +774,12 @@ if ($TryResolveVersion -and (Test-Path -LiteralPath $ExtIdRoot)) {
     $Python = Join-Path (Split-Path -LiteralPath $Launcher) "aria2chrome_native_host.py"
   }
 }
+$ExpectedPkg = Split-Path -Parent (Split-Path -Parent $Launcher)
+if (-not (Test-Path -LiteralPath $ExpectedPkg -PathType Container)) {
+  Write-Host ""
+  Write-Host "Aria2Chrome: NOTE — package folder not present yet; creating path (same version as chrome://extensions Details when you copied this script)." -ForegroundColor Yellow
+  Write-Host "  $ExpectedPkg"
+}
 $Dirs = @(
   (Split-Path -LiteralPath $Manifest),
   (Split-Path -LiteralPath $Launcher)
@@ -776,21 +790,6 @@ function Install-Embedded([string]$Path, [string]$B64) {
 }
 Install-Embedded -Path $Python -B64 $PyB64
 Install-Embedded -Path $Launcher -B64 $BatB64
-$BestVerDir = Split-Path -Parent (Split-Path -LiteralPath $Launcher)
-if (Test-Path -LiteralPath $ExtIdRoot) {
-  $bestResolved = [System.IO.Path]::GetFullPath($BestVerDir)
-  Get-ChildItem -LiteralPath $ExtIdRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-    if ([System.IO.Path]::GetFullPath($_.FullName) -eq $bestResolved) { return }
-    $nh = Join-Path $_.FullName "native_host"
-    if (-not (Test-Path -LiteralPath $nh -PathType Container)) { return }
-    foreach ($n in @("reveal-host.bat","reveal-host.sh","aria2chrome_native_host.py")) {
-      $fp = Join-Path $nh $n
-      if (Test-Path -LiteralPath $fp) { Remove-Item -LiteralPath $fp -Force -ErrorAction SilentlyContinue }
-    }
-    $left = Get-ChildItem -LiteralPath $nh -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count
-    if ($left -eq 0) { Remove-Item -LiteralPath $nh -Force -ErrorAction SilentlyContinue }
-  }
-}
 if ((-not (Test-Path -LiteralPath $Python)) -or (-not (Test-Path -LiteralPath $Launcher))) {
   Write-Host "Aria2Chrome: ERROR — could not install native_host files." -ForegroundColor Red
   Write-Host "  launcher: $Launcher"
@@ -801,6 +800,16 @@ $pyItem = Get-Item -LiteralPath $Python
 $batItem = Get-Item -LiteralPath $Launcher
 if (($null -eq $pyItem) -or ($null -eq $batItem) -or ($pyItem.Length -lt 1) -or ($batItem.Length -lt 1)) {
   throw "native_host files empty after install"
+}
+$CurrentVer = Split-Path -Leaf $ExpectedPkg
+Write-Host "Aria2Chrome: pruning old version folders under $ExtIdRoot (keeping $CurrentVer only)…" -ForegroundColor Cyan
+if (Test-Path -LiteralPath $ExtIdRoot) {
+  Get-ChildItem -LiteralPath $ExtIdRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.Name -notmatch '^\\d+\\.\\d+\\.\\d+$') { return }
+    if ($_.Name -eq $CurrentVer) { return }
+    Write-Host "Aria2Chrome: removing old extension version folder: $($_.FullName)" -ForegroundColor Yellow
+    Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 $ExtId = Split-Path -Leaf -LiteralPath $ExtIdRoot
 $NmJson = @{

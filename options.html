@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1>⚙️ Aria2Chrome Settings</h1>
-      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.22</p>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.25</p>
       <div class="header-theme-row">
         <label for="optionsTheme" class="theme-label">Appearance</label>
         <select id="optionsTheme" title="Options page theme">
@@ -152,7 +152,7 @@
 
         <div class="native-host-os-setup-guide">
           <h3 class="native-host-setup-guide-title">1. Your operating system</h3>
-          <p class="hook-note">For reveal only. The install script targets the newest extension <code>native_host</code> folder, rewrites the embedded host files, updates the manifest, and prunes the same files under older version folders.</p>
+          <p class="hook-note">For reveal only. The install script uses this build&rsquo;s version (same as <strong>chrome://extensions</strong> Details) for <code>…/Extensions/&lt;id&gt;/&lt;version&gt;/native_host/</code>. If needed it <strong>creates</strong> that path, writes the host files, updates the native manifest, then <strong>removes other</strong> <code>x.y.z</code> folders under the same extension id so only the current version remains. If unsure, quit Chrome before running so only this version is active.</p>
 
           <div class="native-host-os-tablist" role="tablist" aria-label="Operating system for install steps and script">
             <button type="button" class="native-host-os-tab native-host-os-tab--active" role="tab" id="nativeHostOsTabMacos" data-native-host-os="macos" aria-selected="true" tabindex="0">macOS</button>
