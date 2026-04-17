@@ -1474,7 +1474,7 @@ async function getAllActiveDownloads() {
   try {
     const active = await aria2RPC('aria2.tellActive');
     const waiting = await aria2RPC('aria2.tellWaiting', [0, 100]);
-    const stopped = await aria2RPC('aria2.tellStopped', [0, 100]);
+    const stopped = await aria2RPC('aria2.tellStopped', [0, 500]);
     
     return [...active, ...waiting, ...stopped];
   } catch (error) {
@@ -1502,16 +1502,14 @@ async function updateDownloadsStatus() {
         downloads[download.gid].completedLength = download.completedLength;
         downloads[download.gid].downloadSpeed = download.downloadSpeed;
         
-        // Store file path for completed downloads
-        if (download.files && download.files.length > 0) {
-          downloads[download.gid].filePath = download.files[0].path;
+        // Store local path whenever aria2 reports files[] (prefer selected file in multi-file jobs)
+        const picked = pickFilePathFromAria2Record(download);
+        if (picked) {
+          downloads[download.gid].filePath = picked;
         }
         
         // Check if download completed
         if (download.status === 'complete' && previousStatus !== 'complete') {
-          if (download.files && download.files.length > 0) {
-            downloads[download.gid].filePath = download.files[0].path;
-          }
           createNotification({
             type: 'basic',
             iconUrl: 'icons/icon48.png',
@@ -1572,6 +1570,41 @@ async function updateDownloadsStatus() {
             }
           }
         }
+      }
+    }
+
+    // Backfill filePath for completed rows — file hosts / many stopped jobs can miss path when only 100 stopped were merged.
+    const missingPath = Object.keys(downloads).filter(
+      (gid) =>
+        downloads[gid].status === 'complete' && !String(downloads[gid].filePath || '').trim()
+    );
+    if (missingPath.length > 0) {
+      try {
+        const BATCH = 400;
+        let offset = 0;
+        const byGid = new Map();
+        for (;;) {
+          const stopped = await aria2RPC('aria2.tellStopped', [offset, BATCH]);
+          const arr = Array.isArray(stopped) ? stopped : [];
+          for (const item of arr) {
+            const p = pickFilePathFromAria2Record(item);
+            if (item && item.gid != null && p) byGid.set(String(item.gid), p);
+          }
+          offset += BATCH;
+          if (arr.length < BATCH) break;
+          if (offset > 6000) break;
+        }
+        for (const gid of missingPath) {
+          const hit = byGid.get(String(gid));
+          if (hit) downloads[gid].filePath = hit;
+        }
+        for (const gid of missingPath) {
+          if (String(downloads[gid].filePath || '').trim()) continue;
+          const guess = await reconstructPathFromConfiguredDir(gid);
+          if (guess) downloads[gid].filePath = guess;
+        }
+      } catch (e) {
+        /* ignore */
       }
     }
     
@@ -1756,32 +1789,71 @@ async function tryAria2RpcOpenFolder(gid) {
   return { opened: false };
 }
 
+/** Prefer the selected file when aria2 returns multiple `files` entries (e.g. BitTorrent). */
+function pickFilePathFromAria2Record(st) {
+  if (!st || typeof st !== 'object') return null;
+  const files = st.files;
+  if (!Array.isArray(files) || files.length === 0) return null;
+  const chosen =
+    files.find((f) => f && (f.selected === 'true' || f.selected === true)) || files[0];
+  const p = chosen && chosen.path;
+  return p && String(p).trim() ? String(p).trim() : null;
+}
+
+/** Last-resort: configured download dir + stored filename (same as addUri `out`). */
+async function reconstructPathFromConfiguredDir(gid) {
+  const entry = downloads[gid];
+  if (!entry || !String(entry.filename || '').trim()) return null;
+  await loadConfig();
+  const configuredDir = (aria2Config.downloadDir || '').trim();
+  if (!configuredDir) return null;
+  const dir = expandPath(configuredDir);
+  const name = String(entry.filename).trim();
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return dir.endsWith(sep) ? dir + name : dir + sep + name;
+}
+
 /**
- * Best-effort path from aria2 (still active/stopped). JSON-RPC has no standard "open folder" — only path refresh.
+ * Best-effort path from aria2 (still active/stopped). File hosts and busy aria2 histories need a
+ * wider tellStopped window than 100 — otherwise filePath stays empty and ✏️/rename fails.
  */
 async function resolveLocalPathFromAria2(gid) {
   if (gid == null || gid === '') return null;
   const d = downloads[gid];
   try {
     const st = await aria2RPC('aria2.tellStatus', [gid, ['files']]);
-    const p = st?.files?.[0]?.path;
-    if (p && String(p).trim()) return String(p).trim();
+    const p = pickFilePathFromAria2Record(st);
+    if (p) return p;
   } catch (e) {
-    // Not in active/waiting/paused queue (e.g. already removed after complete)
+    // Not in active/waiting/paused queue
   }
+  const BATCH = 400;
   try {
-    const stopped = await aria2RPC('aria2.tellStopped', [0, 100]);
-    const arr = Array.isArray(stopped) ? stopped : [];
-    for (const item of arr) {
-      if (String(item.gid) === String(gid)) {
-        const p = item.files?.[0]?.path;
-        if (p && String(p).trim()) return String(p).trim();
+    let offset = 0;
+    for (;;) {
+      const stopped = await aria2RPC('aria2.tellStopped', [offset, BATCH]);
+      const arr = Array.isArray(stopped) ? stopped : [];
+      for (const item of arr) {
+        if (String(item.gid) !== String(gid)) continue;
+        const p = pickFilePathFromAria2Record(item);
+        if (p) return p;
+        break;
       }
+      offset += BATCH;
+      if (arr.length < BATCH) break;
+      if (offset > 8000) break;
     }
   } catch (e) {
-    // ignore
+    /* ignore */
   }
-  return d?.filePath && String(d.filePath).trim() ? String(d.filePath).trim() : null;
+  const fromStored = d?.filePath && String(d.filePath).trim() ? String(d.filePath).trim() : null;
+  if (fromStored) return fromStored;
+  try {
+    const guess = await reconstructPathFromConfiguredDir(gid);
+    return guess && String(guess).trim() ? String(guess).trim() : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 /** Optional Native Messaging host (user must install manifest + enable in Options). Returns true only if host reveals successfully. */
@@ -1990,12 +2062,24 @@ async function renameCompletedDownload(gid, newNameRaw) {
   const newPath = joinDirFile(dir, newName);
   const renameResult = await tryNativeRenameInPlace(oldPath, newPath);
   if (!renameResult.ok) {
-    return {
-      success: false,
-      error:
-        renameResult.error ||
-        'Rename failed. Re-run the install script from Options after upgrading; confirm the helper checkbox is on and Save.'
-    };
+    let errMsg =
+      renameResult.error ||
+      'Rename failed. Re-run the install script from Options after upgrading; confirm the helper checkbox is on and Save.';
+    try {
+      const { os } = await chrome.runtime.getPlatformInfo();
+      if (
+        os === 'mac' &&
+        errMsg &&
+        (/operation not permitted/i.test(errMsg) || /\[errno 1\]/i.test(errMsg)) &&
+        !/full disk access/i.test(errMsg)
+      ) {
+        errMsg +=
+          '\n\nmacOS: ✏️ uses Python (os.rename). Chrome may use a different python3 than your Terminal venv. Reinstall the helper from Options, run: PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" python3 -c "import sys; print(sys.executable)" and add that binary plus Chrome to Full Disk Access, then quit Chrome.';
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return { success: false, error: errMsg };
   }
   downloads[gid].filePath = newPath;
   downloads[gid].filename = newName;

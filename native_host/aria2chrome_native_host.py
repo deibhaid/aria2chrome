@@ -4,7 +4,7 @@ Chrome Native Messaging host: reveal a file in the file manager, or rename in pl
 
 Messages:
   {"path": "/absolute/path/to/file"}  -> reveal in Finder / Explorer / xdg-open parent
-  {"renameInPlace": {"from": "/abs/old.mp3", "to": "/abs/new.mp3"}}  -> os.rename, same directory only
+  {"renameInPlace": {"from": "/abs/old.mp3", "to": "/abs/new.mp3"}}  -> os.rename, same directory only (Python stdlib on all platforms)
 
 Reply: {"ok": true} or {"ok": false, "error": "reason"}
 
@@ -111,15 +111,26 @@ def rename_in_place(from_path: str, to_path: str) -> Dict[str, Any]:
         return {"ok": True}
     except OSError as e:
         err = str(e)
-        # macOS TCC often denies Chrome's helper renames under Desktop/Downloads (EPERM/EACCES).
-        if platform.system() == "Darwin" and getattr(e, "errno", None) in (
-            errno.EPERM,
-            errno.EACCES,
-        ):
+        # macOS TCC: rename runs in the Python process (reveal-host.sh -> python3), not Chrome.app.
+        err_l = err.lower()
+        darwin_perm = platform.system() == "Darwin" and (
+            getattr(e, "errno", None) in (errno.EPERM, errno.EACCES)
+            or isinstance(e, PermissionError)
+            or "operation not permitted" in err_l
+            or "[errno 1]" in err_l
+        )
+        if darwin_perm and "full disk access" not in err_l:
+            py_path = ""
+            try:
+                if getattr(sys, "executable", None):
+                    py_path = str(sys.executable)
+            except Exception:
+                pass
             err += (
-                " On macOS: System Settings → Privacy & Security → Full Disk Access → add Google Chrome "
-                "(then quit and reopen Chrome), or rename in Finder, or use a download folder outside "
-                "Desktop/Downloads for aria2."
+                " On macOS, ✏️ runs as Python, not Chrome — add Google Chrome and this "
+                "interpreter to Full Disk Access (System Settings → Privacy & Security): "
+                + (py_path or "the Python 3 used by reveal-host.sh")
+                + ". Or rename in Finder."
             )
         return {"ok": False, "error": err}
 
