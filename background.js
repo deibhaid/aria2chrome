@@ -2889,6 +2889,78 @@ async function importBackup(backupData) {
 // Store downloads we want to intercept (keyed by download ID)
 const downloadsToIntercept = new Map();
 
+/**
+ * Cancelling immediately after suggest() (e.g. 100ms) interrupts before Chrome fires
+ * downloads.onChanged filename with the path from the Save dialog — delta.filename stays
+ * undefined on interrupt. Defer cancel until Chrome reports filename (debounced), with a fallback.
+ */
+const interceptFallbackCancelTimers = new Map();
+const interceptDebouncedCancelTimers = new Map();
+
+const INTERCEPT_MIN_MS_BEFORE_FILENAME_CANCEL = 350;
+const INTERCEPT_FILENAME_DEBOUNCE_MS = 160;
+const INTERCEPT_FALLBACK_CANCEL_MS = 20000;
+
+function clearInterceptScheduleTimers(downloadId) {
+  const fb = interceptFallbackCancelTimers.get(downloadId);
+  if (fb) {
+    clearTimeout(fb);
+    interceptFallbackCancelTimers.delete(downloadId);
+  }
+  const db = interceptDebouncedCancelTimers.get(downloadId);
+  if (db) {
+    clearTimeout(db);
+    interceptDebouncedCancelTimers.delete(downloadId);
+  }
+}
+
+function scheduleInterceptFallbackCancel(downloadId) {
+  const existing = interceptFallbackCancelTimers.get(downloadId);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    interceptFallbackCancelTimers.delete(downloadId);
+    if (!downloadsToIntercept.has(downloadId)) return;
+    chrome.downloads.cancel(downloadId, () => {
+      if (chrome.runtime.lastError) {
+        console.log('[Aria2 Downloader] Could not cancel download:', chrome.runtime.lastError.message);
+      } else {
+        console.log('[Aria2 Downloader] Download cancelled (fallback timeout), will be added to aria2');
+      }
+    });
+  }, INTERCEPT_FALLBACK_CANCEL_MS);
+  interceptFallbackCancelTimers.set(downloadId, t);
+}
+
+/**
+ * After Chrome emits a filename path (Save dialog committed or auto path), debounce then cancel
+ * so the interrupt handler sees delta.filename / downloads.search with the final basename.
+ */
+function scheduleInterceptCancelAfterFilenameDelta(downloadId) {
+  const info = downloadsToIntercept.get(downloadId);
+  if (!info) return;
+  const existing = interceptDebouncedCancelTimers.get(downloadId);
+  if (existing) clearTimeout(existing);
+  const fb = interceptFallbackCancelTimers.get(downloadId);
+  if (fb) {
+    clearTimeout(fb);
+    interceptFallbackCancelTimers.delete(downloadId);
+  }
+  const elapsed = Date.now() - (info.startedAt || 0);
+  const waitMin = Math.max(0, INTERCEPT_MIN_MS_BEFORE_FILENAME_CANCEL - elapsed);
+  const t = setTimeout(() => {
+    interceptDebouncedCancelTimers.delete(downloadId);
+    if (!downloadsToIntercept.has(downloadId)) return;
+    chrome.downloads.cancel(downloadId, () => {
+      if (chrome.runtime.lastError) {
+        console.log('[Aria2 Downloader] Could not cancel download:', chrome.runtime.lastError.message);
+      } else {
+        console.log('[Aria2 Downloader] Download cancelled (after Chrome filename), will be added to aria2');
+      }
+    });
+  }, waitMin + INTERCEPT_FILENAME_DEBOUNCE_MS);
+  interceptDebouncedCancelTimers.set(downloadId, t);
+}
+
 /** Full path from chrome.downloads → basename only (Windows drive paths OK). */
 function basenameFromChromeDownloadPath(fullPath) {
   if (!fullPath || typeof fullPath !== 'string') return '';
@@ -2994,22 +3066,14 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
       downloadsToIntercept.set(downloadItem.id, {
         url: url,
         filename: finalFilename,
-        referrer: downloadItem.referrer
+        referrer: downloadItem.referrer,
+        startedAt: Date.now()
       });
       
-      // Acknowledge with the filename, then cancel
+      // Acknowledge with the filename; cancel only after Chrome reports final path (Save dialog)
+      // or fallback timeout — not immediately, or delta.filename stays undefined on interrupt.
       suggest({ filename: finalFilename, conflict_action: 'uniquify' });
-      
-      // Then cancel the download asynchronously - we'll add it to aria2 in onChanged
-      setTimeout(() => {
-        chrome.downloads.cancel(downloadItem.id, () => {
-          if (chrome.runtime.lastError) {
-            console.log('[Aria2 Downloader] Could not cancel download:', chrome.runtime.lastError.message);
-          } else {
-            console.log('[Aria2 Downloader] Download cancelled, will be added to aria2');
-          }
-        });
-      }, 100); // Small delay to ensure Chrome has created the download
+      scheduleInterceptFallbackCancel(downloadItem.id);
       return;
     } else {
       console.log('[Aria2 Downloader] Not intercepting, allowing Chrome download');
@@ -3030,12 +3094,14 @@ chrome.downloads.onChanged.addListener(async (delta) => {
       const prev = downloadsToIntercept.get(delta.id);
       downloadsToIntercept.set(delta.id, { ...prev, filename: b });
     }
+    scheduleInterceptCancelAfterFilenameDelta(delta.id);
   }
 
   // Check if this download was cancelled and is one we want to intercept
   if (delta.state && delta.state.current === 'interrupted' && downloadsToIntercept.has(delta.id)) {
     const downloadInfo = downloadsToIntercept.get(delta.id);
     downloadsToIntercept.delete(delta.id);
+    clearInterceptScheduleTimers(delta.id);
     
     // downloadInfo is the snapshot from onDeterminingFilename (often URL suggestion only).
     console.log('[Aria2 Downloader] Download interrupted — stored map entry (pre-Save dialog):', downloadInfo);
@@ -3090,9 +3156,8 @@ chrome.downloads.onChanged.addListener(async (delta) => {
   }
 });
 
-// NOTE: We use onDeterminingFilename to intercept downloads early, before Chrome commits.
-// By not calling suggest(), we prevent Chrome from downloading while still capturing the URL.
-// The download is added to aria2 immediately to prevent expiring links (common with file hosts).
+// NOTE: onDeterminingFilename calls suggest(), then we cancel only after Chrome reports filename
+// (Save dialog) or after a fallback timeout — so aria2 gets the final basename when Chrome exposes it.
 
 // Load downloads on startup
 loadDownloads();
