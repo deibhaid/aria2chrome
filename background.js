@@ -2889,6 +2889,33 @@ async function importBackup(backupData) {
 // Store downloads we want to intercept (keyed by download ID)
 const downloadsToIntercept = new Map();
 
+/** Full path from chrome.downloads → basename only (Windows drive paths OK). */
+function basenameFromChromeDownloadPath(fullPath) {
+  if (!fullPath || typeof fullPath !== 'string') return '';
+  const s = fullPath.trim();
+  if (!s) return '';
+  const parts = s.split(/[/\\]/);
+  return parts.pop() || '';
+}
+
+/**
+ * After the Save dialog, Chrome updates the download record. Initial onDeterminingFilename
+ * filename is often still the site suggestion (e.g. DDLValley.me_…); use the final path.
+ */
+async function getInterceptedDownloadBasename(downloadId, storedFallback) {
+  try {
+    const items = await chrome.downloads.search({ id: downloadId });
+    if (items && items[0] && items[0].filename) {
+      const b = basenameFromChromeDownloadPath(items[0].filename);
+      if (b) return b;
+    }
+  } catch (e) {
+    /* ignore */
+  }
+  const fb = basenameFromChromeDownloadPath(storedFallback) || storedFallback;
+  return fb || '';
+}
+
 // Intercept browser downloads EARLY using onDeterminingFilename
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   console.log('[Aria2 Downloader] onDeterminingFilename triggered:', {
@@ -2996,6 +3023,15 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
 
 // Handle cancelled downloads - add them to aria2
 chrome.downloads.onChanged.addListener(async (delta) => {
+  // Filename can change in a separate event after Save dialog (before interrupt) — keep map fresh.
+  if (delta.filename && delta.filename.current && downloadsToIntercept.has(delta.id)) {
+    const b = basenameFromChromeDownloadPath(delta.filename.current);
+    if (b) {
+      const prev = downloadsToIntercept.get(delta.id);
+      downloadsToIntercept.set(delta.id, { ...prev, filename: b });
+    }
+  }
+
   // Check if this download was cancelled and is one we want to intercept
   if (delta.state && delta.state.current === 'interrupted' && downloadsToIntercept.has(delta.id)) {
     const downloadInfo = downloadsToIntercept.get(delta.id);
@@ -3003,8 +3039,14 @@ chrome.downloads.onChanged.addListener(async (delta) => {
     
     console.log('[Aria2 Downloader] Download interrupted (as expected), adding to aria2:', downloadInfo);
     
-    // Extract filename
-    let finalFilename = downloadInfo.filename;
+    // Prefer name after Save dialog / Chrome's final path — not the pre-dialog suggestion we stored.
+    let finalFilename = '';
+    if (delta.filename && delta.filename.current) {
+      finalFilename = basenameFromChromeDownloadPath(delta.filename.current);
+    }
+    if (!finalFilename) {
+      finalFilename = await getInterceptedDownloadBasename(delta.id, downloadInfo.filename);
+    }
     if (!finalFilename) {
       try {
         const urlObj = new URL(downloadInfo.url);
@@ -3013,9 +3055,7 @@ chrome.downloads.onChanged.addListener(async (delta) => {
         finalFilename = 'download_' + Date.now();
       }
     }
-    
-    // Remove any path from filename
-    finalFilename = finalFilename.split(/[/\\]/).pop();
+    finalFilename = basenameFromChromeDownloadPath(finalFilename) || finalFilename;
     
     // Add to aria2
     const result = await addDownload(
