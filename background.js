@@ -491,6 +491,9 @@ async function loadConfig() {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'sync') return;
+  if (changes.aria2Config) {
+    loadConfig();
+  }
   if (changes.fileExtensions || changes.customFileExtensions) {
     refreshInterceptExtensionsCache();
   }
@@ -2988,6 +2991,35 @@ async function getInterceptedDownloadBasename(downloadId, storedFallback) {
   return fb || '';
 }
 
+/**
+ * Path passed to downloads.onDeterminingFilename suggest() so Chrome's Save As starts under the
+ * same folder tree as the extension's aria2 download directory. Chrome resolves values relative
+ * to the profile default Downloads directory when the path looks like "subdir/file.ext".
+ */
+function buildInterceptSuggestFilename(basename) {
+  const raw = (aria2Config.downloadDir || '').trim();
+  const safeBase = (basename || '').split(/[/\\]/).pop() || 'download';
+  if (!raw) return safeBase;
+  const configuredAbs = expandPath(raw).replace(/[/\\]+$/, '');
+  const norm = configuredAbs.replace(/\\/g, '/');
+  const lower = norm.toLowerCase();
+  const needle = '/downloads/';
+  const idx = lower.lastIndexOf(needle);
+  if (idx !== -1) {
+    const under = norm.slice(idx + needle.length).replace(/\/+$/, '');
+    return under ? `${under}/${safeBase}` : safeBase;
+  }
+  if (norm.startsWith('/')) {
+    return `${norm}/${safeBase}`;
+  }
+  if (/^[A-Za-z]:/.test(configuredAbs)) {
+    const dir = configuredAbs.replace(/[/\\]+$/, '');
+    const sep = /\\/.test(dir) ? '\\' : '/';
+    return `${dir}${sep}${safeBase}`;
+  }
+  return safeBase;
+}
+
 // Intercept browser downloads EARLY using onDeterminingFilename
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
   console.log('[Aria2 Downloader] onDeterminingFilename triggered:', {
@@ -3070,9 +3102,8 @@ chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
         startedAt: Date.now()
       });
       
-      // Acknowledge with the filename; cancel only after Chrome reports final path (Save dialog)
-      // or fallback timeout — not immediately, or delta.filename stays undefined on interrupt.
-      suggest({ filename: finalFilename, conflict_action: 'uniquify' });
+      // Acknowledge with directory + basename so Save As matches aria2 downloadDir (see buildInterceptSuggestFilename).
+      suggest({ filename: buildInterceptSuggestFilename(finalFilename), conflict_action: 'uniquify' });
       scheduleInterceptFallbackCancel(downloadItem.id);
       return;
     } else {

@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1>⚙️ Aria2Chrome Settings</h1>
-      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.28</p>
+      <p style="margin: 0; color: #888; font-size: 13px;">Version 1.2.29</p>
       <div class="header-theme-row">
         <label for="optionsTheme" class="theme-label">Appearance</label>
         <select id="optionsTheme" title="Options page theme">
@@ -67,7 +67,7 @@
             >
             <button type="button" id="copyDownloadDirBtn" class="btn btn-secondary btn-inline">Copy path</button>
           </div>
-          <small>Absolute path only; use your real home dir, not <code>~</code>. The browser cannot read your OS username—use <strong>Typical local aria2</strong> to fill a template from detected OS (same signals as the Local helper tabs).</small>
+          <small>Absolute path only; use your real home dir, not <code>~</code>. The browser cannot read your OS username—use <strong>Typical local aria2</strong> to fill a template from detected OS (same signals as the Local helper tabs). For intercepted downloads, Chrome’s Save As uses this folder when the path includes <strong>Downloads</strong> (e.g. <code>…/Downloads/aria2</code>); other locations fall back to OS-dependent behavior.</small>
           <div class="form-inline-actions">
             <button type="button" id="typicalLocalAria2Btn" class="btn btn-secondary">Typical local aria2</button>
           </div>
